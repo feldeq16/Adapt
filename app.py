@@ -1,115 +1,90 @@
 import streamlit as st
-import folium
-from streamlit_folium import st_folium
-from folium.plugins import FastMarkerCluster
 import pandas as pd
 import os
-import gc # Garbage Collector (le nettoyeur de mémoire)
 
-# --- CONFIGURATION ---
+# --- CONFIGURATION STRICTE ---
 st.set_page_config(layout="wide", page_title="Mon Portail Cartographique")
-st.title("🗺️ Mon Portail Cartographique (Mode Léger)")
+st.title("🗺️ Visualisation Haute Performance")
 
 DOSSIER_DONNEES = 'Données'
 
-# --- FONCTION DE CHARGEMENT HYPER OPTIMISÉE ---
-@st.cache_data(ttl=3600) # Garde en cache 1 heure max
-def charger_donnees_legeres(dossier):
-    donnees_chargees = []
+# --- FONCTION DE CHARGEMENT ---
+@st.cache_data(ttl=3600)
+def charger_donnees_natives(dossier):
+    # On va créer un seul gros tableau avec toutes les données
+    # C'est beaucoup plus efficace pour st.map que plein de petits fichiers
+    all_data = []
     
     if not os.path.exists(dossier):
-        return []
+        return pd.DataFrame()
     
     fichiers = [f for f in os.listdir(dossier) if f.endswith('.txt')]
     
-    for fichier in fichiers:
+    # Barre de progression
+    progression = st.progress(0)
+    
+    for i, fichier in enumerate(fichiers):
         chemin = os.path.join(dossier, fichier)
         try:
-            # 1. On lit juste la 1ère ligne pour voir les colonnes
-            # Cela évite de charger tout le fichier si les colonnes ne sont pas bonnes
-            preview = pd.read_csv(chemin, sep=';', comment='#', encoding='latin-1', nrows=1)
-            cols = [c.strip() for c in preview.columns]
+            # On lit tout mais uniquement les colonnes GPS
+            # st.map a besoin de colonnes nommées 'latitude' et 'longitude' ou 'lat'/'lon'
+            df = pd.read_csv(
+                chemin, 
+                sep=';', 
+                comment='#', 
+                encoding='latin-1',
+                engine='python',
+                usecols=lambda c: 'lat' in c.lower() or 'lon' in c.lower() or 'lng' in c.lower()
+            )
             
-            # On identifie les colonnes vitales
-            if 'Latitude' in cols and 'Longitude' in cols:
-                # On détermine quelles colonnes garder pour économiser la RAM
-                # On garde Lat, Lon, et la 1ère colonne (souvent le nom du point)
-                cols_a_garder = ['Latitude', 'Longitude', cols[0]]
-                if 'ATXHWD' in cols: cols_a_garder.append('ATXHWD')
+            # Nettoyage
+            df.columns = [c.strip().lower() for c in df.columns]
+            
+            # Renommage standard pour que Streamlit comprenne
+            df = df.rename(columns={'latitude': 'lat', 'longitude': 'lon'})
+            
+            # On vérifie qu'on a bien lat et lon
+            if 'lat' in df.columns and 'lon' in df.columns:
+                # On nettoie les erreurs (virgules au lieu de points, etc)
+                df['lat'] = pd.to_numeric(df['lat'], errors='coerce')
+                df['lon'] = pd.to_numeric(df['lon'], errors='coerce')
+                df = df.dropna()
                 
-                # 2. Lecture restreinte
-                df = pd.read_csv(
-                    chemin, 
-                    sep=';', 
-                    comment='#', 
-                    encoding='latin-1',
-                    engine='python',
-                    usecols=lambda c: c.strip() in cols_a_garder, # On ne charge que l'utile
-                    nrows=2000 # <--- STOP à 2000 lignes par fichier pour sauver la RAM
-                )
+                # On ajoute une colonne pour identifier la source (optionnel)
+                # df['source'] = fichier 
                 
-                # Nettoyage des noms de colonnes
-                df.columns = df.columns.str.strip()
-                
-                # Conversion en numérique (pour alléger la mémoire, les nombres prennent moins de place que le texte)
-                df['Latitude'] = pd.to_numeric(df['Latitude'], errors='coerce')
-                df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
-                df = df.dropna(subset=['Latitude', 'Longitude'])
-                
-                donnees_chargees.append((fichier, df))
-                
-                # 3. On vide la mémoire intermédiaire immédiatement
-                del df
-                gc.collect()
-                
+                all_data.append(df)
+        
         except Exception as e:
-            print(f"Erreur lecture {fichier}: {e}")
-            continue
+            print(f"Erreur {fichier}: {e}")
             
-    return donnees_chargees
+        # Mise à jour de la barre
+        progression.progress((i + 1) / len(fichiers))
 
-# --- APPLICATION ---
-
-with st.sidebar:
-    st.header("🗂️ Données (Mode Éco)")
+    progression.empty()
     
-    with st.spinner('Chargement optimisé...'):
-        liste_donnees = charger_donnees_legeres(DOSSIER_DONNEES)
-    
-    if not liste_donnees:
-        st.warning("Aucune donnée chargée ou dossier vide.")
+    if all_data:
+        return pd.concat(all_data, ignore_index=True)
     else:
-        st.success(f"{len(liste_donnees)} fichiers chargés.")
-        st.info("⚠️ Affichage limité à 2000 points/fichier pour la stabilité.")
+        return pd.DataFrame()
 
-    st.divider()
-    map_style = st.selectbox("Fond de carte", ["OpenStreetMap", "CartoDB Positron"])
-
-# --- CARTE AVEC FASTMARKERCLUSTER (Plus léger que MarkerCluster) ---
-m = folium.Map(location=[46.603354, 1.888334], zoom_start=6, tiles=map_style)
-
-for nom_fichier, df in liste_donnees:
-    # On prépare les données pour FastMarkerCluster
-    # C'est une méthode qui envoie juste les coordonnées brutes à la carte (très léger)
-    # Le callback permet d'afficher le nom quand on clique
+# --- INTERFACE ---
+with st.sidebar:
+    st.header("Données")
+    st.write("Chargement en mode 'Big Data'...")
     
-    callback = ('function (row) {' 
-                'var marker = L.marker(new L.LatLng(row[0], row[1]), {color: "red"});'
-                'var icon = L.AwesomeMarkers.icon({'
-                "icon: 'info-sign',"
-                "markerColor: 'blue',"
-                "prefix: 'glyphicon'"
-                '});'
-                'marker.setIcon(icon);'
-                'return marker};')
+    df_final = charger_donnees_natives(DOSSIER_DONNEES)
+    
+    if not df_final.empty:
+        st.success(f"✅ {len(df_final)} points affichés !")
+        st.info("Utilisation de la technologie DeckGL (Native) pour la performance.")
+    else:
+        st.error("Aucune donnée valide trouvée.")
 
-    # FastMarkerCluster est beaucoup plus performant pour la RAM
-    cluster = FastMarkerCluster(
-        data=list(zip(df['Latitude'], df['Longitude'])),
-        name=nom_fichier,
-    ).add_to(m)
-
-folium.LayerControl().add_to(m)
-
-# Affichage sans renvoyer d'objets (économie de RAM navigateur)
-st_folium(m, width="100%", height=700, returned_objects=[])
+# --- AFFICHAGE CARTE NATIVE ---
+# st.map est incapable de planter, même avec 1 million de points
+# Par contre, c'est juste des points (pas de clic pour l'instant)
+if not df_final.empty:
+    st.map(df_final, size=20, color='#0044ff')
+else:
+    st.write("En attente de données...")
