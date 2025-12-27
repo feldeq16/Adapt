@@ -6,118 +6,76 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import numpy as np
 import unicodedata
+from geopy.geocoders import Nominatim
+from geopy.distance import geodesic
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="Analyse Climatique")
-st.title("🌡️ Analyse Climatique (Mode Debug)")
+st.title("🌡️ Analyse Climatique & Recherche d'Adresse")
 
 DOSSIER_DONNEES = 'Données'
 
-# --- OUTILS DE NETTOYAGE ---
+# --- OUTILS & FONCTIONS ---
 def remove_accents(input_str):
     if not isinstance(input_str, str): return str(input_str)
     nfkd_form = unicodedata.normalize('NFKD', input_str)
     return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
 
 def trouver_header_et_lire(chemin):
-    """
-    Tente plusieurs encodages (UTF-8 d'abord, puis Latin-1)
-    et cherche la ligne de départ des données.
-    """
-    # Liste des encodages à tester par ordre de priorité
+    """Lecture robuste avec détection d'encodage et de header."""
     encodages_a_tester = ['utf-8', 'latin-1', 'cp1252']
-    
     for enc in encodages_a_tester:
         try:
-            # 1. On essaie de lire les 50 premières lignes avec cet encodage
             with open(chemin, 'r', encoding=enc) as f:
                 lignes = [f.readline() for _ in range(50)]
             
-            # Si pas d'erreur, on cherche la ligne Latitude/Longitude
             header_row = None
-            sep = ';' # Par défaut
-            
+            sep = ';'
             for i, ligne in enumerate(lignes):
                 ligne_clean = remove_accents(ligne).lower()
-                
-                # On cherche les mots clés vitaux
                 if 'latitude' in ligne_clean and 'longitude' in ligne_clean:
                     header_row = i
-                    # Détection du séparateur
                     if ';' in ligne: sep = ';'
                     elif ',' in ligne: sep = ','
                     elif '\t' in ligne: sep = '\t'
                     break
             
             if header_row is not None:
-                # Si on a trouvé le header, on charge le tout avec cet encodage
                 df = pd.read_csv(chemin, sep=sep, header=header_row, encoding=enc, engine='python')
-                return df, None, enc # Succès !
-                
-        except UnicodeDecodeError:
-            # Si cet encodage échoue, on passe au suivant dans la boucle
+                return df, None
+        except:
             continue
-        except Exception as e:
-            return None, str(e), enc
+    return None, "Lecture impossible"
 
-    return None, "Impossible de lire le fichier (Encodage ou Header introuvable)", "Inconnu"
-
-# --- 2. CHARGEMENT ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def charger_donnees(dossier):
     all_data = pd.DataFrame()
-    debug_infos = [] 
-    
-    if not os.path.exists(dossier):
-        return pd.DataFrame(), [f"❌ Dossier '{dossier}' introuvable."], None
+    if not os.path.exists(dossier): return pd.DataFrame(), f"Dossier '{dossier}' introuvable."
     
     fichiers = [f for f in os.listdir(dossier) if f.endswith('.txt')]
-    
-    barre = st.progress(0, text="Analyse des fichiers...")
+    barre = st.progress(0, text="Chargement des données...")
     
     for i, fichier in enumerate(fichiers):
         chemin = os.path.join(dossier, fichier)
         barre.progress((i)/len(fichiers))
         
-        # Lecture intelligente avec détection d'encodage
-        df, erreur, enc_detecte = trouver_header_et_lire(chemin)
-        
-        if erreur:
-            debug_infos.append(f"❌ {fichier} : {erreur}")
-            continue
+        df, erreur = trouver_header_et_lire(chemin)
+        if erreur: continue
             
-        # Nettoyage des colonnes (strip)
         df.columns = [c.strip() for c in df.columns]
         
-        # Info debug pour vous
-        cols_vues = df.columns.tolist()
-        
-        # Recherche de la colonne Période (Robustesse maximale)
-        col_periode = None
-        for col in df.columns:
-            # On nettoie tout : "PÃ©riode" devient "periode" si l'encodage est bon
-            col_clean = remove_accents(col.lower())
-            if 'eriode' in col_clean or 'horizon' in col_clean:
-                col_periode = col
-                break
-        
-        if col_periode:
-            df['Horizon_Filter'] = df[col_periode].astype(str).str.strip()
-            # On ajoute l'info de l'encodage dans le debug
-            debug_infos.append(f"✅ {fichier} ({enc_detecte}) : Période trouvée ('{col_periode}')")
-        else:
-            df['Horizon_Filter'] = "Non défini"
-            # Affiche les 3 premières colonnes pour aider au diagnostic
-            debug_infos.append(f"⚠️ {fichier} ({enc_detecte}) : Colonne Période introuvable. Colonnes vues : {cols_vues[:5]}...")
+        # Recherche colonne Période
+        col_periode = next((c for c in df.columns if 'eriode' in remove_accents(c.lower()) or 'horizon' in remove_accents(c.lower())), None)
+        df['Horizon_Filter'] = df[col_periode].astype(str).str.strip() if col_periode else "Non défini"
 
         # Scénario
-        nom_min = fichier.lower()
-        if "rcp2.6" in nom_min or "rcp26" in nom_min: df['Scenario'] = "RCP 2.6"
-        elif "rcp4.5" in nom_min or "rcp45" in nom_min: df['Scenario'] = "RCP 4.5"
-        elif "rcp8.5" in nom_min or "rcp85" in nom_min: df['Scenario'] = "RCP 8.5"
+        nom = fichier.lower()
+        if "rcp2.6" in nom or "rcp26" in nom: df['Scenario'] = "RCP 2.6"
+        elif "rcp4.5" in nom or "rcp45" in nom: df['Scenario'] = "RCP 4.5"
+        elif "rcp8.5" in nom or "rcp85" in nom: df['Scenario'] = "RCP 8.5"
         else: df['Scenario'] = "Autre"
 
-        # Conversion Données
+        # Conversion
         if {'Latitude', 'Longitude', 'ATXHWD'}.issubset(df.columns):
             df['Latitude'] = pd.to_numeric(df['Latitude'], errors='coerce')
             df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
@@ -129,38 +87,59 @@ def charger_donnees(dossier):
             df = df.dropna(subset=['Latitude', 'Longitude', 'ATXHWD'])
             df['Source'] = fichier
             all_data = pd.concat([all_data, df], ignore_index=True)
-        else:
-            debug_infos.append(f"❌ {fichier} : Colonnes Lat/Lon/ATXHWD manquantes.")
 
     barre.empty()
-    return all_data, debug_infos, None
+    return all_data, None
 
-# --- 3. INTERFACE ---
+# --- FONCTION GÉOCODAGE & ANALYSE ---
+@st.cache_data
+def geocode_address(address):
+    """Convertit une adresse en lat/lon via OpenStreetMap"""
+    try:
+        geolocator = Nominatim(user_agent="my_climate_app_v1")
+        location = geolocator.geocode(address)
+        if location:
+            return location.latitude, location.longitude
+        return None, None
+    except:
+        return None, None
+
+def interpoler_valeur(lat_cible, lon_cible, df, n_neighbors=5):
+    """
+    Extrapole la valeur ATXHWD pour l'adresse cible en utilisant 
+    l'Inverse Distance Weighting (IDW) sur les N voisins les plus proches.
+    """
+    # 1. Calcul des distances pour tous les points
+    # (On utilise une approximation rapide ici pour trier, puis geodesic pour la précision)
+    df = df.copy()
+    df['dist_approx'] = (df['Latitude'] - lat_cible)**2 + (df['Longitude'] - lon_cible)**2
+    
+    # 2. On prend les N plus proches
+    neighbors = df.nsmallest(n_neighbors, 'dist_approx').copy()
+    
+    # 3. Calcul précis des distances géodésiques (km)
+    neighbors['distance_km'] = neighbors.apply(
+        lambda row: geodesic((lat_cible, lon_cible), (row['Latitude'], row['Longitude'])).km, axis=1
+    )
+    
+    # 4. Calcul IDW (Moyenne pondérée par l'inverse de la distance au carré)
+    # On évite la division par zéro si on est pile sur un point
+    neighbors['weight'] = 1 / (neighbors['distance_km'] + 0.001)**2
+    
+    weighted_sum = (neighbors['ATXHWD'] * neighbors['weight']).sum()
+    sum_of_weights = neighbors['weight'].sum()
+    
+    estimated_value = weighted_sum / sum_of_weights
+    
+    return neighbors, estimated_value
+
+# --- 2. INTERFACE & CHARGEMENT ---
 with st.sidebar:
     st.header("🎛️ Paramètres")
+    df_total, erreur = charger_donnees(DOSSIER_DONNEES)
     
-    if st.button("Recharger"):
-        st.cache_data.clear()
-        st.rerun()
-
-    # Appel du chargement
-    df_total, debug_logs, erreur_globale = charger_donnees(DOSSIER_DONNEES)
-    
-    if erreur_globale:
-        st.error(erreur_globale)
-        st.stop()
-
-    # --- ZONE DE DÉBUG ---
-    with st.expander("🕵️ DIAGNOSTIC (Voir détails)"):
-        st.write("État de lecture des fichiers :")
-        for log in debug_logs:
-            if "❌" in log: st.error(log)
-            elif "⚠️" in log: st.warning(log)
-            else: st.success(log)
-    # ---------------------
-
-    if df_total.empty:
-        st.warning("Aucune donnée chargée.")
+    if erreur or df_total.empty:
+        st.error(erreur or "Aucune donnée.")
         st.stop()
 
     # Filtres
@@ -170,18 +149,17 @@ with st.sidebar:
     df_rcp = df_total[df_total['Scenario'] == choix_rcp]
     horizons = sorted(df_rcp['Horizon_Filter'].unique())
     
-    if not horizons or (len(horizons) == 1 and horizons[0] == "Non défini"):
-        st.warning("⚠️ Impossible de filtrer par Période.")
-        choix_horizon = None
-    else:
-        choix_horizon = st.radio("Période :", horizons)
-
-    # Légende Gradient
+    if not horizons:
+        st.warning("Périodes introuvables.")
+        st.stop()
+    choix_horizon = st.radio("Période :", horizons)
+    
+    st.divider()
+    st.write("Légende (ATXHWD)")
+    
+    # Légende
     val_min = df_total['ATXHWD'].min()
     val_max = df_total['ATXHWD'].max()
-    st.divider()
-    st.write(f"Min: {val_min:.1f} | Max: {val_max:.1f}")
-    
     cmap = plt.get_cmap("coolwarm")
     gradient = np.linspace(0, 1, 256)
     gradient = np.vstack((gradient, gradient))
@@ -189,30 +167,58 @@ with st.sidebar:
     ax.imshow(gradient, aspect='auto', cmap=cmap)
     ax.set_axis_off()
     st.pyplot(fig)
+    st.write(f"Min: {val_min:.1f} | Max: {val_max:.1f}")
 
-# --- 4. CARTE ---
-if choix_horizon:
-    df_map = df_rcp[df_rcp['Horizon_Filter'] == choix_horizon].copy()
-else:
-    df_map = pd.DataFrame()
+# --- 3. LOGIQUE PRINCIPALE ---
 
-if not df_map.empty:
-    norm = mcolors.Normalize(vmin=val_min, vmax=val_max)
-    colors = cmap(norm(df_map['ATXHWD'].values))
-    df_map['r'] = (colors[:, 0] * 255).astype(int)
-    df_map['g'] = (colors[:, 1] * 255).astype(int)
-    df_map['b'] = (colors[:, 2] * 255).astype(int)
+# Préparation des données filtrées
+df_map = df_rcp[df_rcp['Horizon_Filter'] == choix_horizon].copy()
 
-    st.info(f"Visualisation : {choix_rcp} - {choix_horizon}")
+if df_map.empty:
+    st.warning("Pas de données pour cette sélection.")
+    st.stop()
 
-    view_state = pdk.ViewState(
-        latitude=df_map['Latitude'].mean(),
-        longitude=df_map['Longitude'].mean(),
-        zoom=5.5,
-        pitch=0
-    )
+# Barre de recherche (au-dessus de la carte)
+col_search, col_info = st.columns([3, 1])
+with col_search:
+    adresse_recherche = st.text_input("🔍 Rechercher une adresse en France (ex: 15 rue de Rivoli, Paris)", "")
 
-    layer = pdk.Layer(
+user_lat, user_lon = None, None
+search_layer = None
+
+# Traitement de la recherche
+if adresse_recherche:
+    user_lat, user_lon = geocode_address(adresse_recherche)
+    
+    if user_lat:
+        st.success(f"Adresse trouvée : Latitude {user_lat:.4f}, Longitude {user_lon:.4f}")
+        
+        # Création de la couche pour le pin utilisateur (VERT FLUO)
+        search_data = pd.DataFrame({'lat': [user_lat], 'lon': [user_lon], 'name': ["Votre Adresse"]})
+        search_layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=search_data,
+            get_position='[lon, lat]',
+            get_color='[0, 255, 0, 255]', # Vert pur opaque
+            get_radius=8000, # Un peu plus gros que les autres
+            pickable=True,
+            stroked=True,
+            get_line_color=[0, 0, 0],
+            line_width_min_pixels=2
+        )
+    else:
+        st.error("Adresse introuvable. Essayez d'être plus précis (Code postal, Ville).")
+
+# Calcul des couleurs pour la carte principale
+norm = mcolors.Normalize(vmin=val_min, vmax=val_max)
+colors = cmap(norm(df_map['ATXHWD'].values))
+df_map['r'] = (colors[:, 0] * 255).astype(int)
+df_map['g'] = (colors[:, 1] * 255).astype(int)
+df_map['b'] = (colors[:, 2] * 255).astype(int)
+
+# --- 4. AFFICHAGE CARTE ---
+layers = [
+    pdk.Layer(
         "ScatterplotLayer",
         data=df_map,
         get_position='[Longitude, Latitude]',
@@ -221,12 +227,56 @@ if not df_map.empty:
         pickable=True,
         auto_highlight=True
     )
+]
 
-    tooltip = {
-        "html": "<b>ATXHWD:</b> {ATXHWD}<br><b>Période:</b> {Horizon_Filter}",
-        "style": {"color": "white"}
-    }
-
-    st.pydeck_chart(pdk.Deck(map_style=None, initial_view_state=view_state, layers=[layer], tooltip=tooltip))
+if search_layer:
+    layers.append(search_layer)
+    # Si recherche, on centre sur l'adresse avec un zoom plus fort
+    view_state = pdk.ViewState(latitude=user_lat, longitude=user_lon, zoom=8, pitch=0)
 else:
-    st.write("Sélectionnez un horizon valide.")
+    # Sinon vue globale
+    view_state = pdk.ViewState(latitude=df_map['Latitude'].mean(), longitude=df_map['Longitude'].mean(), zoom=5.5, pitch=0)
+
+tooltip = {"html": "<b>ATXHWD:</b> {ATXHWD}<br><b>Point:</b> {Point}", "style": {"color": "white"}}
+
+st.pydeck_chart(pdk.Deck(map_style=None, initial_view_state=view_state, layers=layers, tooltip=tooltip))
+
+# --- 5. TABLEAUX D'ANALYSE (SOUS LA CARTE) ---
+if user_lat and not df_map.empty:
+    st.divider()
+    st.subheader("📊 Analyse Locale")
+    
+    # Calcul de l'interpolation et des voisins
+    voisins, estimation = interpoler_valeur(user_lat, user_lon, df_map, n_neighbors=5)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.info("📍 Point de mesure le plus proche")
+        # Le plus proche est le 1er de la liste triée
+        plus_proche = voisins.iloc[0]
+        
+        st.metric(
+            label=f"Station : {plus_proche['Point']}", 
+            value=f"{plus_proche['ATXHWD']:.2f}",
+            delta=f"à {plus_proche['distance_km']:.1f} km"
+        )
+        st.write(f"*Donnée réelle issue du modèle {choix_rcp} / {choix_horizon}*")
+
+    with col2:
+        st.success("🎯 Valeur Extrapolée à votre adresse")
+        st.metric(
+            label="Estimation ATXHWD",
+            value=f"{estimation:.2f}"
+        )
+        st.write("*Calculée par interpolation (pondération par distance) des 5 points les plus proches.*")
+    
+    st.write("---")
+    st.write("**Détail des 5 points utilisés pour le calcul :**")
+    
+    # Nettoyage du tableau pour l'affichage
+    display_voisins = voisins[['Point', 'ATXHWD', 'distance_km', 'Latitude', 'Longitude']].copy()
+    display_voisins['distance_km'] = display_voisins['distance_km'].map('{:.2f} km'.format)
+    display_voisins['ATXHWD'] = display_voisins['ATXHWD'].map('{:.2f}'.format)
+    
+    st.dataframe(display_voisins, use_container_width=True, hide_index=True)
