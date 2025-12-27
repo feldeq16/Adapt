@@ -24,6 +24,7 @@ m = folium.Map(location=[46.603354, 1.888334], zoom_start=6, tiles=map_style)
 
 # --- CHARGEMENT DES FICHIERS ---
 fichiers_txt = [f for f in os.listdir('.') if f.endswith('.txt')]
+print(fichiers_txt)
 
 if not fichiers_txt:
     st.warning("⚠️ Aucun fichier .txt trouvé dans le dossier GitHub.")
