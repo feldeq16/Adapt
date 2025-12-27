@@ -8,137 +8,165 @@ import numpy as np
 import unicodedata
 
 # --- 1. CONFIGURATION ---
-st.set_page_config(layout="wide", page_title="Analyse Climatique", initial_sidebar_state="expanded")
-
-st.title("🌡️ Analyse des Indices Climatiques (ATXHWD)")
-st.markdown("""
-<style>
-    .stApp { margin-top: -30px; }
-    div[data-testid="stSidebar"] { background-color: #f8f9fa; }
-</style>
-""", unsafe_allow_html=True)
+st.set_page_config(layout="wide", page_title="Analyse Climatique")
+st.title("🌡️ Analyse Climatique (Mode Debug)")
 
 DOSSIER_DONNEES = 'Données'
 
-# Fonction pour enlever les accents (Période -> periode) pour la comparaison
+# --- OUTILS DE NETTOYAGE ---
 def remove_accents(input_str):
+    if not isinstance(input_str, str): return str(input_str)
     nfkd_form = unicodedata.normalize('NFKD', input_str)
     return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
 
-# --- 2. FONCTION DE CHARGEMENT ---
+def trouver_header_et_lire(chemin):
+    """
+    Cherche intelligemment la ligne qui contient 'Latitude' et 'Longitude'
+    pour savoir où commence le tableau, peu importe le texte avant.
+    """
+    # 1. On lit les 50 premières lignes brutes pour trouver l'en-tête
+    with open(chemin, 'r', encoding='latin-1') as f:
+        lignes = [f.readline() for _ in range(50)]
+    
+    header_row = None
+    sep = ';' # Par défaut
+    
+    for i, ligne in enumerate(lignes):
+        # On nettoie la ligne pour comparer
+        ligne_clean = remove_accents(ligne).lower()
+        if 'latitude' in ligne_clean and 'longitude' in ligne_clean:
+            header_row = i
+            # Détection simple du séparateur
+            if ';' in ligne: sep = ';'
+            elif ',' in ligne: sep = ','
+            elif '\t' in ligne: sep = '\t'
+            break
+            
+    if header_row is None:
+        return None, "En-tête (Latitude/Longitude) non trouvé dans les 50 premières lignes."
+
+    # 2. On lit le CSV à partir de la bonne ligne
+    try:
+        df = pd.read_csv(chemin, sep=sep, header=header_row, encoding='latin-1', engine='python')
+        return df, None
+    except Exception as e:
+        return None, str(e)
+
+# --- 2. CHARGEMENT ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def charger_donnees(dossier):
     all_data = pd.DataFrame()
+    debug_infos = [] # Pour stocker les infos de diagnostic
+    
     if not os.path.exists(dossier):
-        return pd.DataFrame(), f"Dossier '{dossier}' introuvable."
+        return pd.DataFrame(), [], f"Dossier '{dossier}' introuvable."
     
     fichiers = [f for f in os.listdir(dossier) if f.endswith('.txt')]
     
-    barre = st.progress(0, text="Chargement des modèles...")
+    barre = st.progress(0, text="Analyse des fichiers...")
     
     for i, fichier in enumerate(fichiers):
         chemin = os.path.join(dossier, fichier)
         barre.progress((i)/len(fichiers))
         
-        try:
-            # Lecture (latin-1 gère bien les accents français Windows)
-            df = pd.read_csv(chemin, sep=';', comment='#', encoding='latin-1', engine='python')
-            
-            # Nettoyage des noms de colonnes
-            df.columns = [c.strip() for c in df.columns]
-            
-            # --- DÉTECTION ROBUSTE DE LA COLONNE PÉRIODE ---
-            col_periode_trouvee = None
-            for col in df.columns:
-                # On nettoie le nom de la colonne (minuscule + sans accent)
-                col_clean = remove_accents(col.lower())
-                if 'periode' in col_clean or 'horizon' in col_clean:
-                    col_periode_trouvee = col
-                    break
-            
-            if col_periode_trouvee:
-                # On standardise le contenu
-                df['Horizon_Filter'] = df[col_periode_trouvee].astype(str).str.strip()
-            else:
-                # Si introuvable, on le signale mais on ne plante pas
-                df['Horizon_Filter'] = "Non défini"
-
-            # --- DÉTECTION SCÉNARIO RCP ---
-            # On cherche dans le nom du fichier
-            nom_min = fichier.lower()
-            if "rcp2.6" in nom_min or "rcp26" in nom_min:
-                df['Scenario'] = "RCP 2.6"
-            elif "rcp4.5" in nom_min or "rcp45" in nom_min:
-                df['Scenario'] = "RCP 4.5"
-            elif "rcp8.5" in nom_min or "rcp85" in nom_min:
-                df['Scenario'] = "RCP 8.5"
-            else:
-                df['Scenario'] = "Autre"
-
-            # --- CONVERSION ET NETTOYAGE ---
-            if {'Latitude', 'Longitude', 'ATXHWD'}.issubset(df.columns):
-                df['Latitude'] = pd.to_numeric(df['Latitude'], errors='coerce')
-                df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
-                
-                # Gestion virgule/point pour ATXHWD
-                if df['ATXHWD'].dtype == object:
-                     df['ATXHWD'] = pd.to_numeric(df['ATXHWD'].str.replace(',', '.'), errors='coerce')
-                else:
-                     df['ATXHWD'] = pd.to_numeric(df['ATXHWD'], errors='coerce')
-
-                df = df.dropna(subset=['Latitude', 'Longitude', 'ATXHWD'])
-                df['Source'] = fichier
-                
-                all_data = pd.concat([all_data, df], ignore_index=True)
-                
-        except Exception as e:
-            print(f"Erreur {fichier}: {e}")
+        # Lecture intelligente
+        df, erreur = trouver_header_et_lire(chemin)
+        
+        if erreur:
+            debug_infos.append(f"❌ {fichier} : {erreur}")
             continue
             
+        # Nettoyage des colonnes (strip)
+        df.columns = [c.strip() for c in df.columns]
+        
+        # --- DIAGNOSTIC : On enregistre les colonnes vues ---
+        cols_vues = df.columns.tolist()
+        
+        # Recherche de la colonne Période
+        col_periode = None
+        for col in df.columns:
+            if 'eriode' in remove_accents(col.lower()) or 'horizon' in remove_accents(col.lower()):
+                col_periode = col
+                break
+        
+        if col_periode:
+            df['Horizon_Filter'] = df[col_periode].astype(str).str.strip()
+            debug_infos.append(f"✅ {fichier} : Période trouvée dans colonne '{col_periode}'")
+        else:
+            df['Horizon_Filter'] = "Non défini"
+            debug_infos.append(f"⚠️ {fichier} : Colonnes lues = {cols_vues}. Mot-clé 'Période' introuvable.")
+
+        # Scénario
+        nom_min = fichier.lower()
+        if "rcp2.6" in nom_min or "rcp26" in nom_min: df['Scenario'] = "RCP 2.6"
+        elif "rcp4.5" in nom_min or "rcp45" in nom_min: df['Scenario'] = "RCP 4.5"
+        elif "rcp8.5" in nom_min or "rcp85" in nom_min: df['Scenario'] = "RCP 8.5"
+        else: df['Scenario'] = "Autre"
+
+        # Nettoyage Données
+        if {'Latitude', 'Longitude', 'ATXHWD'}.issubset(df.columns):
+            df['Latitude'] = pd.to_numeric(df['Latitude'], errors='coerce')
+            df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
+            if df['ATXHWD'].dtype == object:
+                 df['ATXHWD'] = pd.to_numeric(df['ATXHWD'].str.replace(',', '.'), errors='coerce')
+            else:
+                 df['ATXHWD'] = pd.to_numeric(df['ATXHWD'], errors='coerce')
+            
+            df = df.dropna(subset=['Latitude', 'Longitude', 'ATXHWD'])
+            df['Source'] = fichier
+            all_data = pd.concat([all_data, df], ignore_index=True)
+        else:
+            debug_infos.append(f"❌ {fichier} : Colonnes Lat/Lon/ATXHWD manquantes.")
+
     barre.empty()
-    return all_data, None
+    return all_data, debug_infos, None
 
 # --- 3. INTERFACE ---
 with st.sidebar:
     st.header("🎛️ Paramètres")
     
-    # Bouton reset cache (utile si bug)
-    if st.button("Recharger les données"):
+    if st.button("Recharger"):
         st.cache_data.clear()
         st.rerun()
 
-    df_total, erreur = charger_donnees(DOSSIER_DONNEES)
+    df_total, debug_logs, erreur_globale = charger_donnees(DOSSIER_DONNEES)
     
-    if erreur:
-        st.error(erreur)
+    if erreur_globale:
+        st.error(erreur_globale)
         st.stop()
-        
+
+    # --- ZONE DE DÉBUG (C'est ça qu'il vous faut) ---
+    with st.expander("🕵️ DIAGNOSTIC (Cliquez ici)"):
+        st.write("Voici ce que le script a vu dans vos fichiers :")
+        for log in debug_logs:
+            if "⚠️" in log or "❌" in log:
+                st.error(log)
+            else:
+                st.success(log)
+    # -----------------------------------------------
+
     if df_total.empty:
-        st.warning("Aucune donnée valide trouvée.")
+        st.warning("Aucune donnée chargée. Regardez le diagnostic ci-dessus.")
         st.stop()
 
-    # Filtre 1 : RCP
+    # Filtres
     scenarios = sorted(df_total['Scenario'].unique())
-    choix_rcp = st.radio("1. Scénario d'émission :", scenarios)
+    choix_rcp = st.radio("Scénario :", scenarios)
 
-    # Filtre 2 : Horizon (Filtré selon le RCP choisi pour éviter les options vides)
     df_rcp = df_total[df_total['Scenario'] == choix_rcp]
-    
     horizons = sorted(df_rcp['Horizon_Filter'].unique())
+    
     if not horizons or (len(horizons) == 1 and horizons[0] == "Non défini"):
-        st.error("⚠️ Colonne 'Période' non détectée dans les fichiers.")
+        st.warning("Périodes non détectées.")
         choix_horizon = None
     else:
-        choix_horizon = st.radio("2. Horizon temporel :", horizons)
+        choix_horizon = st.radio("Période :", horizons)
 
-    st.divider()
-    
     # Légende
     val_min = df_total['ATXHWD'].min()
     val_max = df_total['ATXHWD'].max()
-    
-    st.write(f"**Légende (ATXHWD)**")
-    st.write(f"Min global: {val_min:.1f} | Max global: {val_max:.1f}")
+    st.divider()
+    st.write(f"Min: {val_min:.1f} | Max: {val_max:.1f}")
     
     cmap = plt.get_cmap("coolwarm")
     gradient = np.linspace(0, 1, 256)
@@ -149,27 +177,20 @@ with st.sidebar:
     st.pyplot(fig)
 
 # --- 4. CARTE ---
-
-# Application des filtres
 if choix_horizon:
     df_map = df_rcp[df_rcp['Horizon_Filter'] == choix_horizon].copy()
 else:
-    df_map = pd.DataFrame()
+    df_map = pd.DataFrame() # Vide
 
 if not df_map.empty:
-    # Calcul des couleurs
     norm = mcolors.Normalize(vmin=val_min, vmax=val_max)
-    
     colors = cmap(norm(df_map['ATXHWD'].values))
     df_map['r'] = (colors[:, 0] * 255).astype(int)
     df_map['g'] = (colors[:, 1] * 255).astype(int)
     df_map['b'] = (colors[:, 2] * 255).astype(int)
 
-    # Stats
-    moy = df_map['ATXHWD'].mean()
-    st.info(f"Affichage : **{choix_rcp}** - **{choix_horizon}** | Moyenne de la zone : **{moy:.2f}**")
+    st.info(f"Visualisation : {choix_rcp} - {choix_horizon}")
 
-    # Vue
     view_state = pdk.ViewState(
         latitude=df_map['Latitude'].mean(),
         longitude=df_map['Longitude'].mean(),
@@ -177,7 +198,6 @@ if not df_map.empty:
         pitch=0
     )
 
-    # Couche
     layer = pdk.Layer(
         "ScatterplotLayer",
         data=df_map,
@@ -188,24 +208,11 @@ if not df_map.empty:
         auto_highlight=True
     )
 
-    # Tooltip
     tooltip = {
-        "html": """
-            <div style="background-color: white; color: black; padding: 5px; border: 1px solid #ccc; font-size: 12px;">
-                <b>Point:</b> {Point}<br>
-                <b>ATXHWD:</b> {ATXHWD}<br>
-                <b>Scenario:</b> {Scenario}<br>
-                <b>Horizon:</b> {Horizon_Filter}
-            </div>
-        """
+        "html": "<b>ATXHWD:</b> {ATXHWD}<br><b>Période:</b> {Horizon_Filter}",
+        "style": {"color": "white"}
     }
 
-    st.pydeck_chart(pdk.Deck(
-        map_style=None,
-        initial_view_state=view_state,
-        layers=[layer],
-        tooltip=tooltip
-    ))
-
+    st.pydeck_chart(pdk.Deck(map_style=None, initial_view_state=view_state, layers=[layer], tooltip=tooltip))
 else:
-    st.warning("Aucune donnée correspondante à cette sélection.")
+    st.write("Sélectionnez un horizon valide.")
