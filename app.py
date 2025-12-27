@@ -3,96 +3,94 @@ import pandas as pd
 import pydeck as pdk
 import os
 
-# 1. Configuration ultra-simple
-st.set_page_config(page_title="Test Diagnostic")
+# --- 1. CONFIGURATION DE LA PAGE ---
+st.set_page_config(
+    layout="wide", 
+    page_title="Portail Cartographique",
+    initial_sidebar_state="expanded"
+)
 
-# 2. Si ce texte s'affiche, c'est que Streamlit fonctionne
-st.title("🛠️ Mode Diagnostic")
-st.write("Si vous lisez ceci, l'application a démarré correctement.")
+# Titre
+st.title("🗺️ Visualisation de Données Climatiques")
+st.markdown("""
+<style>
+    .stApp { margin-top: -50px; }
+</style>
+""", unsafe_allow_html=True)
 
+# Nom exact du dossier (Attention aux majuscules/accents)
 DOSSIER_DONNEES = 'Données'
 
-# 3. Vérification du dossier
-if not os.path.exists(DOSSIER_DONNEES):
-    st.error(f"Le dossier '{DOSSIER_DONNEES}' n'est pas trouvé sur GitHub.")
-    st.stop() # On arrête tout ici si pas de dossier
-
-fichiers = [f for f in os.listdir(DOSSIER_DONNEES) if f.endswith('.txt')]
-st.write(f"Fichiers détectés : {len(fichiers)}")
-
-# --- SECTION DE CHARGEMENT MANUEL ---
-st.divider()
-st.write("Pour éviter le crash, nous allons charger seulement 50 lignes par fichier.")
-
-# Bouton pour lancer le chargement (évite le chargement automatique qui plante)
-if st.button("Lancer le chargement test"):
+# --- 2. FONCTION DE CHARGEMENT ROBUSTE (CACHE) ---
+@st.cache_data(ttl=3600, show_spinner=False)
+def charger_toutes_les_donnees(dossier):
+    """
+    Lit tous les fichiers TXT du dossier, nettoie les données,
+    et assigne une couleur unique par fichier.
+    """
+    all_data = pd.DataFrame()
     
-    all_data = []
+    if not os.path.exists(dossier):
+        return None, f"Le dossier '{dossier}' est introuvable."
     
-    # Barre de progression
-    barre = st.progress(0)
+    fichiers = [f for f in os.listdir(dossier) if f.endswith('.txt')]
+    
+    if not fichiers:
+        return None, "Aucun fichier .txt trouvé."
+
+    # Palette de couleurs (RGB) pour distinguer les fichiers
+    # Rouge, Vert, Bleu, Orange, Violet, Cyan, Jaune
+    couleurs = [
+        [231, 76, 60],   # Rouge Aladin
+        [46, 204, 113],  # Vert
+        [52, 152, 219],  # Bleu
+        [243, 156, 18],  # Orange
+        [155, 89, 182],  # Violet
+        [26, 188, 156],  # Turquoise
+        [241, 196, 15]   # Jaune
+    ]
+    
+    # Barre de progression dans l'interface principale pour faire patienter
+    barre_progression = st.progress(0, text="Démarrage du chargement...")
     
     for i, fichier in enumerate(fichiers):
-        st.write(f"Lecture de {fichier}...")
-        chemin = os.path.join(DOSSIER_DONNEES, fichier)
+        chemin = os.path.join(dossier, fichier)
+        
+        # Mise à jour de la barre
+        barre_progression.progress((i)/len(fichiers), text=f"Lecture de {fichier}...")
         
         try:
-            # ON CHARGE SEULEMENT 50 LIGNES (nrows=50)
+            # Lecture optimisée : on saute les commentaires '#' et on force l'encodage
+            # On lit TOUT le fichier (pas de limite nrows) car PyDeck peut le gérer
             df = pd.read_csv(
                 chemin, 
                 sep=';', 
                 comment='#', 
-                encoding='latin-1',
-                engine='python',
-                nrows=50 
+                encoding='latin-1', 
+                engine='python'
             )
             
-            # Nettoyage express
+            # Nettoyage des noms de colonnes (retirer les espaces)
             df.columns = [c.strip() for c in df.columns]
             
+            # Vérification des colonnes GPS
             if 'Latitude' in df.columns and 'Longitude' in df.columns:
-                # Conversion propre
+                # Conversion en nombres (écarte les erreurs)
                 df['Latitude'] = pd.to_numeric(df['Latitude'], errors='coerce')
                 df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
                 df = df.dropna(subset=['Latitude', 'Longitude'])
                 
-                # Ajout de couleur rouge par défaut
-                df['color_r'] = 255
-                df['color_g'] = 0
-                df['color_b'] = 0
+                # Ajout des métadonnées pour la carte
+                df['source_fichier'] = fichier
                 
-                all_data.append(df)
-                st.success(f"✅ {fichier} : OK ({len(df)} lignes)")
-            else:
-                st.warning(f"⚠️ {fichier} : Colonnes Lat/Lon manquantes.")
+                # Assigner une couleur fixe à ce fichier
+                couleur_attribuee = couleurs[i % len(couleurs)]
+                df['r'] = couleur_attribuee[0]
+                df['g'] = couleur_attribuee[1]
+                df['b'] = couleur_attribuee[2]
+                
+                # On concatène au gros tableau
+                all_data = pd.concat([all_data, df], ignore_index=True)
                 
         except Exception as e:
-            st.error(f"❌ Erreur sur {fichier} : {e}")
-        
-        barre.progress((i + 1) / len(fichiers))
-            
-    # --- AFFICHAGE CARTE ---
-    if all_data:
-        df_final = pd.concat(all_data)
-        st.write(f"Total points chargés : {len(df_final)}")
-        
-        # Carte PyDeck simple
-        st.pydeck_chart(pdk.Deck(
-            map_style='mapbox://styles/mapbox/light-v9',
-            initial_view_state=pdk.ViewState(
-                latitude=46.6,
-                longitude=1.8,
-                zoom=5
-            ),
-            layers=[
-                pdk.Layer(
-                    'ScatterplotLayer',
-                    data=df_final,
-                    get_position='[Longitude, Latitude]',
-                    get_color='[color_r, color_g, color_b, 160]',
-                    get_radius=10000,
-                ),
-            ],
-        ))
-    else:
-        st.error("Aucune donnée valide récupérée.")
+            st.error(f"Erreur sur
