@@ -1,11 +1,3 @@
 streamlit
 pandas
-folium
-streamlit-folium
-geopandas
-requests
-numpy
-branca
-scipy
-matplotlib
 pydeck
