@@ -1,0 +1,12 @@
+streamlit
+pandas
+folium
+streamlit-folium
+geopandas
+io
+os
+requests
+numpy
+branca
+scipy
+matplotlib
