@@ -1,20 +1,22 @@
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
-from folium.plugins import MarkerCluster # <--- L'outil magique
+from folium.plugins import FastMarkerCluster
 import pandas as pd
 import os
+import gc # Garbage Collector (le nettoyeur de mémoire)
 
 # --- CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="Mon Portail Cartographique")
-st.title("🗺️ Mon Portail Cartographique")
+st.title("🗺️ Mon Portail Cartographique (Mode Léger)")
 
 DOSSIER_DONNEES = 'Données'
 
-# --- FONCTION DE CHARGEMENT (CACHE) ---
-@st.cache_data
-def charger_les_donnees(dossier):
+# --- FONCTION DE CHARGEMENT HYPER OPTIMISÉE ---
+@st.cache_data(ttl=3600) # Garde en cache 1 heure max
+def charger_donnees_legeres(dossier):
     donnees_chargees = []
+    
     if not os.path.exists(dossier):
         return []
     
@@ -23,66 +25,91 @@ def charger_les_donnees(dossier):
     for fichier in fichiers:
         chemin = os.path.join(dossier, fichier)
         try:
-            # Lecture optimisée
-            df = pd.read_csv(
-                chemin, 
-                sep=';', 
-                comment='#', 
-                encoding='latin-1', 
-                engine='python'
-            )
-            df.columns = df.columns.str.strip()
+            # 1. On lit juste la 1ère ligne pour voir les colonnes
+            # Cela évite de charger tout le fichier si les colonnes ne sont pas bonnes
+            preview = pd.read_csv(chemin, sep=';', comment='#', encoding='latin-1', nrows=1)
+            cols = [c.strip() for c in preview.columns]
             
-            if 'Latitude' in df.columns and 'Longitude' in df.columns:
-                # On allège les données : on garde juste ce qui est nécessaire pour la carte
-                cols_utiles = ['Latitude', 'Longitude'] + [c for c in df.columns if c not in ['Latitude', 'Longitude']][:5]
-                donnees_chargees.append((fichier, df[cols_utiles]))
+            # On identifie les colonnes vitales
+            if 'Latitude' in cols and 'Longitude' in cols:
+                # On détermine quelles colonnes garder pour économiser la RAM
+                # On garde Lat, Lon, et la 1ère colonne (souvent le nom du point)
+                cols_a_garder = ['Latitude', 'Longitude', cols[0]]
+                if 'ATXHWD' in cols: cols_a_garder.append('ATXHWD')
                 
-        except Exception:
+                # 2. Lecture restreinte
+                df = pd.read_csv(
+                    chemin, 
+                    sep=';', 
+                    comment='#', 
+                    encoding='latin-1',
+                    engine='python',
+                    usecols=lambda c: c.strip() in cols_a_garder, # On ne charge que l'utile
+                    nrows=2000 # <--- STOP à 2000 lignes par fichier pour sauver la RAM
+                )
+                
+                # Nettoyage des noms de colonnes
+                df.columns = df.columns.str.strip()
+                
+                # Conversion en numérique (pour alléger la mémoire, les nombres prennent moins de place que le texte)
+                df['Latitude'] = pd.to_numeric(df['Latitude'], errors='coerce')
+                df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
+                df = df.dropna(subset=['Latitude', 'Longitude'])
+                
+                donnees_chargees.append((fichier, df))
+                
+                # 3. On vide la mémoire intermédiaire immédiatement
+                del df
+                gc.collect()
+                
+        except Exception as e:
+            print(f"Erreur lecture {fichier}: {e}")
             continue
             
     return donnees_chargees
 
-# --- SIDEBAR ---
+# --- APPLICATION ---
+
 with st.sidebar:
-    st.header("🗂️ Données")
-    with st.spinner('Chargement...'):
-        liste_donnees = charger_les_donnees(DOSSIER_DONNEES)
-    st.success(f"{len(liste_donnees)} fichiers prêts.")
+    st.header("🗂️ Données (Mode Éco)")
     
+    with st.spinner('Chargement optimisé...'):
+        liste_donnees = charger_donnees_legeres(DOSSIER_DONNEES)
+    
+    if not liste_donnees:
+        st.warning("Aucune donnée chargée ou dossier vide.")
+    else:
+        st.success(f"{len(liste_donnees)} fichiers chargés.")
+        st.info("⚠️ Affichage limité à 2000 points/fichier pour la stabilité.")
+
     st.divider()
     map_style = st.selectbox("Fond de carte", ["OpenStreetMap", "CartoDB Positron"])
 
-# --- CARTE ---
+# --- CARTE AVEC FASTMARKERCLUSTER (Plus léger que MarkerCluster) ---
 m = folium.Map(location=[46.603354, 1.888334], zoom_start=6, tiles=map_style)
 
-# --- DESSIN OPTIMISÉ (CLUSTERING) ---
 for nom_fichier, df in liste_donnees:
-    # Au lieu d'ajouter au map, on ajoute à un "Cluster"
-    # Cela groupe les points automatiquement
-    cluster = MarkerCluster(name=nom_fichier).add_to(m)
+    # On prépare les données pour FastMarkerCluster
+    # C'est une méthode qui envoie juste les coordonnées brutes à la carte (très léger)
+    # Le callback permet d'afficher le nom quand on clique
     
-    # On limite à 2000 points par fichier pour éviter le crash navigateur si le fichier est énorme
-    # Si vous avez une machine puissante, vous pouvez enlever .head(2000)
-    data_to_plot = df.head(2000) 
-    
-    for row in data_to_plot.itertuples():
-        # Construction du texte
-        infos = "<br>".join([f"<b>{k}:</b> {v}" for k, v in row._asdict().items() if k not in ['Index', 'Latitude', 'Longitude']])
-        
-        folium.CircleMarker(
-            location=[row.Latitude, row.Longitude],
-            radius=5,
-            color="blue",
-            fill=True,
-            fill_opacity=0.7,
-            popup=folium.Popup(infos, max_width=200)
-        ).add_to(cluster) # <-- On ajoute au cluster, pas à la carte directement
+    callback = ('function (row) {' 
+                'var marker = L.marker(new L.LatLng(row[0], row[1]), {color: "red"});'
+                'var icon = L.AwesomeMarkers.icon({'
+                "icon: 'info-sign',"
+                "markerColor: 'blue',"
+                "prefix: 'glyphicon'"
+                '});'
+                'marker.setIcon(icon);'
+                'return marker};')
 
-# Ajout du contrôle des couches
+    # FastMarkerCluster est beaucoup plus performant pour la RAM
+    cluster = FastMarkerCluster(
+        data=list(zip(df['Latitude'], df['Longitude'])),
+        name=nom_fichier,
+    ).add_to(m)
+
 folium.LayerControl().add_to(m)
 
-# --- AFFICHAGE FINAL OPTIMISÉ ---
-# returned_objects=[] empêche Streamlit de recharger la page à chaque mouvement de souris
-# Cela rend la carte beaucoup plus fluide
+# Affichage sans renvoyer d'objets (économie de RAM navigateur)
 st_folium(m, width="100%", height=700, returned_objects=[])
