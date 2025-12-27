@@ -46,7 +46,7 @@ def charger_donnees(dossier):
 
         # Utilisation de votre fonction de lecture (assurez-vous qu'elle gère l'encodage)
         df = lire_fichier(os.path.join(dossier, f))
-        cols_unmatch = [c for c in final_df.columns if "Unnamed" in c]
+        cols_unmatch = [c for c in df.columns if "Unnamed" in c]
         df = df.drop(columns=cols_unmatch)
         df.columns = [c.strip() for c in df.columns]
 
