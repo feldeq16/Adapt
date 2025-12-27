@@ -60,11 +60,10 @@ def charger_donnees_1(dossier):
 @st.cache_data
 def charger_donnees(dossier):
     """
-    Agrège tous les fichiers dans une table unique.
-    L'identifiant unique est ['Point','Contexte','Période'].
-    Toutes les colonnes mesures sont fusionnées sans duplication et sans perdre de données existantes.
+    Agrège tous les fichiers du dossier dans une table unique.
+    Identifiant unique : Point, Contexte, Période.
     """
-    final_df = None  # DataFrame final
+    all_dfs = []
     id_cols = ["Point", "Contexte", "Période"]
     latlon_cols = ["Latitude", "Longitude"]
 
@@ -72,42 +71,33 @@ def charger_donnees(dossier):
         if not f.endswith(".txt"):
             continue
 
+        # Utilisation de votre fonction de lecture (assurez-vous qu'elle gère l'encodage)
         df = lire_fichier(os.path.join(dossier, f))
         df.columns = [c.strip() for c in df.columns]
 
-        # Conversion numérique pour les colonnes de mesures
+        # Nettoyage et conversion numérique
         for c in df.columns:
             if c in latlon_cols:
-                df[c] = pd.to_numeric(df[c], errors="coerce")
+                df[c] = pd.to_numeric(df[c].astype(str).str.replace(",", "."), errors="coerce")
             elif c not in id_cols:
                 df[c] = pd.to_numeric(df[c].astype(str).str.replace(",", "."), errors="coerce")
+        
+        all_dfs.append(df)
 
-        # Si final_df est vide, on initialise avec le premier DataFrame
-        if final_df is None:
-            final_df = df
-        else:
-            # On garde uniquement les colonnes nouvelles à fusionner
-            new_columns = [col for col in df.columns if col not in final_df.columns and col not in id_cols + latlon_cols]
-            
-            # Si de nouvelles colonnes existent, on les fusionne
-            if new_columns:
-                # Fusionner les nouvelles colonnes avec les données existantes
-                final_df = pd.merge(final_df, df[id_cols + latlon_cols + new_columns], 
-                                     on=id_cols + latlon_cols, 
-                                     how="outer", 
-                                     suffixes=('', '_nouveau'))
-                
-                # Pour chaque nouvelle colonne, on garde les anciennes valeurs existantes
-                for col in new_columns:
-                    # Si une colonne existe déjà, on la met à jour avec les nouvelles valeurs non nulles
-                    if col in final_df.columns:
-                        final_df[col] = final_df[col].fillna(final_df[f"{col}_nouveau"])
-                        # On supprime la colonne temporaire '_nouveau' après l'intégration
-                        final_df.drop(columns=[f"{col}_nouveau"], inplace=True)
+    if not all_dfs:
+        return None
 
-    # Retourner le DataFrame final avec toutes les variables
+    # 1. On empile tous les fichiers les uns sous les autres
+    combined_df = pd.concat(all_dfs, ignore_index=True)
+
+    # 2. On agrège par l'identifiant unique
+    # On utilise 'first' pour Lat/Lon (car elles ne changent pas)
+    # et 'mean' ou 'first' pour les variables (selon si vous avez des doublons de mesures)
+    agg_dict = {col: "first" for col in combined_df.columns if col not in id_cols}
+    
+    final_df = combined_df.groupby(id_cols, as_index=False).agg(agg_dict)
+
     return final_df
-
 
 
 # ============================================
