@@ -62,7 +62,7 @@ def charger_donnees(dossier):
     """
     Agrège tous les fichiers dans une table unique.
     L'identifiant unique est ['Point','Contexte','Période'].
-    Toutes les colonnes mesures sont fusionnées sans duplication.
+    Toutes les colonnes mesures sont fusionnées sans duplication et sans perdre de données existantes.
     """
     final_df = None  # DataFrame final
     id_cols = ["Point", "Contexte", "Période"]
@@ -89,14 +89,25 @@ def charger_donnees(dossier):
             # On garde uniquement les colonnes nouvelles à fusionner
             new_columns = [col for col in df.columns if col not in final_df.columns and col not in id_cols + latlon_cols]
             
-            # Si de nouvelles colonnes existent, on fait la fusion
+            # Si de nouvelles colonnes existent, on les fusionne
             if new_columns:
+                # Fusionner les nouvelles colonnes avec les données existantes
                 final_df = pd.merge(final_df, df[id_cols + latlon_cols + new_columns], 
                                      on=id_cols + latlon_cols, 
-                                     how="outer")
+                                     how="outer", 
+                                     suffixes=('', '_nouveau'))
+                
+                # Pour chaque nouvelle colonne, on garde les anciennes valeurs existantes
+                for col in new_columns:
+                    # Si une colonne existe déjà, on la met à jour avec les nouvelles valeurs non nulles
+                    if col in final_df.columns:
+                        final_df[col] = final_df[col].fillna(final_df[f"{col}_nouveau"])
+                        # On supprime la colonne temporaire '_nouveau' après l'intégration
+                        final_df.drop(columns=[f"{col}_nouveau"], inplace=True)
 
     # Retourner le DataFrame final avec toutes les variables
     return final_df
+
 
 
 # ============================================
