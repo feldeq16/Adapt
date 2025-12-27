@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import numpy as np
 import unicodedata
-import uuid # Pour générer un identifiant unique
+import uuid # Pour l'identifiant unique
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
@@ -91,14 +91,13 @@ def charger_donnees(dossier):
 # --- FONCTION GÉOCODAGE ROBUSTE ---
 @st.cache_data
 def geocode_address(address):
-    """Géocodage via OSM avec User-Agent aléatoire pour éviter le blocage"""
+    """Géocodage via OSM avec User-Agent aléatoire + Timeout"""
     try:
-        # On crée un identifiant unique à chaque démarrage pour ne pas être bloqué
+        # Identifiant unique pour éviter le blocage 403 Forbidden
         unique_agent = f"climate_app_{uuid.uuid4()}"
-        
         geolocator = Nominatim(user_agent=unique_agent)
         
-        # On ajoute un timeout de 10 secondes
+        # Timeout augmenté à 10s
         location = geolocator.geocode(address, timeout=10)
         
         if location:
@@ -109,11 +108,16 @@ def geocode_address(address):
         return None, None
 
 def interpoler_valeur(lat, lon, df, n=5):
-    """Calcul des voisins proches"""
+    """Calcul des voisins proches (Interpolation IDW)"""
     df = df.copy()
+    # Approximation rapide
     df['d_approx'] = (df['Latitude']-lat)**2 + (df['Longitude']-lon)**2
     neighbors = df.nsmallest(n, 'd_approx').copy()
+    
+    # Calcul précis
     neighbors['dist_km'] = neighbors.apply(lambda r: geodesic((lat,lon), (r['Latitude'], r['Longitude'])).km, axis=1)
+    
+    # Pondération
     neighbors['w'] = 1 / (neighbors['dist_km'] + 0.001)**2
     est = (neighbors['ATXHWD']*neighbors['w']).sum() / neighbors['w'].sum()
     return neighbors, est
@@ -168,22 +172,22 @@ if adr:
     else:
         st.error("Adresse introuvable (Service surchargé ou adresse incorrecte).")
 
-# --- COUCHES PYDECK (L'ordre est important) ---
+# --- COUCHES PYDECK ---
 layers = []
 
-# 1. Couche des Données Climatiques (Points)
+# 1. Données
 data_layer = pdk.Layer(
     "ScatterplotLayer",
     data=df_map,
     get_position=['Longitude', 'Latitude'],
-    get_color=['r', 'g', 'b', 160], # 160 = Transparence
-    get_radius=2000, # Rayon de 2km par point
-    pickable=True,   # Cliquable
+    get_color=['r', 'g', 'b', 160],
+    get_radius=2000,
+    pickable=True,
     auto_highlight=True
 )
 layers.append(data_layer)
 
-# 2. Couche Utilisateur (Si recherche active)
+# 2. Utilisateur
 if u_lat:
     user_data = pd.DataFrame({'lat': [u_lat], 'lon': [u_lon]})
     user_layer = pdk.Layer(
@@ -191,7 +195,7 @@ if u_lat:
         data=user_data,
         get_position='[lon, lat]',
         get_color='[0, 255, 0]', # VERT FLUO
-        get_radius=5000, # Plus gros que les points de données
+        get_radius=5000,
         stroked=True,
         get_line_color=[0, 0, 0],
         line_width_min_pixels=3,
@@ -199,26 +203,15 @@ if u_lat:
     )
     layers.append(user_layer)
     
-    # *** VIEW STATE DYNAMIQUE ***
-    # Si on a une adresse, on zoom fort dessus (Zoom 11)
-    view_state = pdk.ViewState(
-        latitude=u_lat, 
-        longitude=u_lon, 
-        zoom=11, 
-        pitch=0
-    )
+    # Zoom forcé sur l'utilisateur
+    view_state = pdk.ViewState(latitude=u_lat, longitude=u_lon, zoom=11, pitch=0)
 else:
-    # Sinon, vue globale sur la France (Zoom 5.5)
-    view_state = pdk.ViewState(
-        latitude=df_map['Latitude'].mean(), 
-        longitude=df_map['Longitude'].mean(), 
-        zoom=5.5, 
-        pitch=0
-    )
+    # Vue globale
+    view_state = pdk.ViewState(latitude=df_map['Latitude'].mean(), longitude=df_map['Longitude'].mean(), zoom=5.5, pitch=0)
 
 # --- AFFICHAGE CARTE ---
 st.pydeck_chart(pdk.Deck(
-    map_style="mapbox://styles/mapbox/light-v9", # Fond de carte clair et propre
+    map_style="mapbox://styles/mapbox/light-v9",
     initial_view_state=view_state,
     layers=layers,
     tooltip={"html": "<b>ATXHWD:</b> {ATXHWD}<br><b>Station:</b> {Point}"}
@@ -227,7 +220,9 @@ st.pydeck_chart(pdk.Deck(
 # --- TABLEAUX DE RÉSULTATS ---
 if u_lat:
     st.divider()
-    voisins, val_est = interpoler_local(u_lat, u_lon, df_map)
+    # CORRECTION ICI : On appelle bien 'interpoler_valeur' et non plus 'interpoler_local'
+    voisins, val_est = interpoler_valeur(u_lat, u_lon, df_map)
+    
     c1, c2 = st.columns(2)
     p_proche = voisins.iloc[0]
     
