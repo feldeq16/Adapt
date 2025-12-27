@@ -11,9 +11,8 @@ st.title("🗺️ Mon Portail Cartographique")
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("🗂️ Données chargées")
-    st.write("Les fichiers suivants ont été détectés et chargés automatiquement depuis le serveur :")
+    st.write("Fichiers détectés (format Point;Latitude;Longitude...) :")
     
-    # Sélecteur de fond de carte
     st.divider()
     map_style = st.selectbox(
         "Style de carte",
@@ -23,8 +22,7 @@ with st.sidebar:
 # --- CRÉATION DE LA CARTE ---
 m = folium.Map(location=[46.603354, 1.888334], zoom_start=6, tiles=map_style)
 
-# --- CHARGEMENT AUTOMATIQUE DES FICHIERS .TXT ---
-# On liste tous les fichiers du dossier actuel qui finissent par .txt
+# --- CHARGEMENT DES FICHIERS ---
 fichiers_txt = [f for f in os.listdir('.') if f.endswith('.txt')]
 
 if not fichiers_txt:
@@ -32,44 +30,51 @@ if not fichiers_txt:
 else:
     for fichier in fichiers_txt:
         try:
-            # L'option sep=None et engine='python' permet à Pandas de 
-            # deviner tout seul si c'est des virgules, des points-virgules ou des tabulations.
-            df = pd.read_csv(fichier, sep=None, engine='python')
+            # On force le séparateur ";" et on gère l'encodage (utf-8 ou latin-1 pour le français)
+            try:
+                df = pd.read_csv(fichier, sep=';', engine='python', encoding='utf-8')
+            except UnicodeDecodeError:
+                df = pd.read_csv(fichier, sep=';', engine='python', encoding='latin-1')
             
-            # Recherche des colonnes Lat/Lon
-            cols = [c.lower() for c in df.columns]
-            possible_lat = [col for col in df.columns if "lat" in col.lower()]
-            possible_lon = [col for col in df.columns if "lon" in col.lower() or "lng" in col.lower()]
-
-            if possible_lat and possible_lon:
-                lat_col = possible_lat[0]
-                lon_col = possible_lon[0]
+            # Nettoyage des noms de colonnes (enlève les espaces invisibles)
+            df.columns = df.columns.str.strip()
+            
+            # Vérification que les colonnes vitales sont là
+            if 'Latitude' in df.columns and 'Longitude' in df.columns:
                 
-                # Création d'un groupe pour ce fichier (permet de cocher/décocher dans la carte)
+                # Création du groupe de calques pour ce fichier
                 feature_group = folium.FeatureGroup(name=fichier)
                 
                 for index, row in df.iterrows():
-                    # On tente de récupérer le nom du point (souvent la 1ère colonne)
-                    tooltip_text = str(row.iloc[0])
+                    # Construction du texte qui s'affiche au survol
+                    # On utilise .get() pour éviter les erreurs si une colonne est vide
+                    texte_bulle = f"""
+                    <b>Point:</b> {row.get('Point', 'N/A')}<br>
+                    <b>Contexte:</b> {row.get('Contexte', '-')}<br>
+                    <b>Période:</b> {row.get('Période', '-')}<br>
+                    <b>ATXHWD:</b> {row.get('ATXHWD', '-')}
+                    """
                     
                     folium.CircleMarker(
-                        location=[row[lat_col], row[lon_col]],
-                        radius=5,
+                        location=[row['Latitude'], row['Longitude']],
+                        radius=6,
+                        color="#3388ff",
                         fill=True,
-                        tooltip=f"{fichier}: {tooltip_text}",
-                        color="blue",
-                        fill_color="cyan"
+                        fill_color="#3388ff",
+                        fill_opacity=0.7,
+                        popup=folium.Popup(texte_bulle, max_width=300),
+                        tooltip=f"{row.get('Point', 'Point')}" # Info-bulle rapide
                     ).add_to(feature_group)
                 
                 feature_group.add_to(m)
                 st.sidebar.success(f"✅ {fichier} : {len(df)} points")
             else:
-                st.sidebar.warning(f"⚠️ {fichier} ignoré : Pas de colonne 'lat'/'lon' trouvée.")
+                st.sidebar.error(f"⚠️ {fichier} : Colonnes 'Latitude' ou 'Longitude' introuvables. Colonnes vues : {list(df.columns)}")
                 
         except Exception as e:
-            st.sidebar.error(f"Erreur sur {fichier}: {e}")
+            st.sidebar.error(f"Erreur lecture {fichier}: {e}")
 
-# Ajout du panneau de contrôle des couches (pour masquer/afficher les fichiers)
+# Ajout du contrôle des couches
 folium.LayerControl().add_to(m)
 
 # --- AFFICHAGE ---
