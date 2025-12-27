@@ -32,9 +32,9 @@ else:
         try:
             # On force le séparateur ";" et on gère l'encodage (utf-8 ou latin-1 pour le français)
             try:
-                df = pd.read_csv(fichier, sep=';', engine='python', encoding='utf-8')
+                df = pd.read_csv(fichier, sep=';', engine='python', encoding='utf-8', comment = '#')
             except UnicodeDecodeError:
-                df = pd.read_csv(fichier, sep=';', engine='python', encoding='latin-1')
+                df = pd.read_csv(fichier, sep=';', engine='python', encoding='latin-1', comment = '#')
             
             # Nettoyage des noms de colonnes (enlève les espaces invisibles)
             df.columns = df.columns.str.strip()
