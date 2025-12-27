@@ -59,8 +59,13 @@ def charger_donnees_1(dossier):
 
 @st.cache_data
 def charger_donnees(dossier):
-    final_df = None  # DataFrame final
-    id_cols = ["Point", "Contexte", "Période"]  # identifiant unique
+    """
+    Agrège tous les fichiers dans une table unique.
+    L'identifiant unique est ['Point','Contexte','Période'].
+    Toutes les colonnes mesures sont empilées correctement.
+    """
+    final_df = pd.DataFrame()
+    id_cols = ["Point", "Contexte", "Période"]
     latlon_cols = ["Latitude", "Longitude"]
 
     for f in os.listdir(dossier):
@@ -77,19 +82,14 @@ def charger_donnees(dossier):
             elif c not in id_cols:
                 df[c] = pd.to_numeric(df[c].astype(str).str.replace(",", "."), errors="coerce")
 
-        # Si DataFrame final vide, on prend les colonnes id + mesures
-        if final_df is None:
-            final_df = df
-        else:
-            # Merge sur l'identifiant unique
-            final_df = pd.merge(
-                final_df,
-                df,
-                on=id_cols + latlon_cols,  # merge sur l'identifiant + lat/lon
-                how="outer"
-            )
+        # Vérifier les colonnes déjà existantes
+        cols_to_use = id_cols + latlon_cols + [c for c in df.columns if c not in id_cols + latlon_cols]
+        
+        # On empile les lignes
+        final_df = pd.concat([final_df, df[cols_to_use]], ignore_index=True)
 
     return final_df
+
 
 # ============================================
 # DONNÉES
