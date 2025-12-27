@@ -41,24 +41,7 @@ def trouver_header_et_lire(chemin):
                     break
             
             if header_row is not None:
-                # On lit le fichier
                 df = pd.read_csv(chemin, sep=sep, header=header_row, encoding=enc, engine='python')
-                
-                # --- CORRECTION DE L'ERREUR KEYERROR ---
-                # On nettoie les noms de colonnes (enlève BOM \ufeff et espaces)
-                df.columns = [c.replace('\ufeff', '').strip() for c in df.columns]
-                
-                # On renomme la colonne identifiant en "Point" de manière standard
-                col_rename_map = {}
-                for col in df.columns:
-                    c_lower = remove_accents(col.lower())
-                    if 'point' in c_lower or 'station' in c_lower:
-                        col_rename_map[col] = 'Point'
-                
-                if col_rename_map:
-                    df = df.rename(columns=col_rename_map)
-                # ----------------------------------------
-                
                 return df, None
         except:
             continue
@@ -79,6 +62,8 @@ def charger_donnees(dossier):
         df, erreur = trouver_header_et_lire(chemin)
         if erreur: continue
             
+        df.columns = [c.strip() for c in df.columns]
+        
         # Recherche colonne Période
         col_periode = next((c for c in df.columns if 'eriode' in remove_accents(c.lower()) or 'horizon' in remove_accents(c.lower())), None)
         df['Horizon_Filter'] = df[col_periode].astype(str).str.strip() if col_periode else "Non défini"
@@ -91,9 +76,7 @@ def charger_donnees(dossier):
         else: df['Scenario'] = "Autre"
 
         # Conversion
-        # On vérifie si on a bien 'Point' maintenant (grâce au renommage plus haut)
-        colonnes_requises = {'Latitude', 'Longitude', 'ATXHWD'}
-        if colonnes_requises.issubset(df.columns):
+        if {'Latitude', 'Longitude', 'ATXHWD'}.issubset(df.columns):
             df['Latitude'] = pd.to_numeric(df['Latitude'], errors='coerce')
             df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
             if df['ATXHWD'].dtype == object:
@@ -103,11 +86,6 @@ def charger_donnees(dossier):
             
             df = df.dropna(subset=['Latitude', 'Longitude', 'ATXHWD'])
             df['Source'] = fichier
-            
-            # Si la colonne Point n'existe pas, on prend la 1ère colonne par défaut pour éviter le plantage
-            if 'Point' not in df.columns:
-                df['Point'] = df.iloc[:, 0].astype(str)
-
             all_data = pd.concat([all_data, df], ignore_index=True)
 
     barre.empty()
@@ -118,7 +96,7 @@ def charger_donnees(dossier):
 def geocode_address(address):
     """Convertit une adresse en lat/lon via OpenStreetMap"""
     try:
-        geolocator = Nominatim(user_agent="my_climate_app_v2")
+        geolocator = Nominatim(user_agent="my_climate_app_v1")
         location = geolocator.geocode(address)
         if location:
             return location.latitude, location.longitude
@@ -127,19 +105,27 @@ def geocode_address(address):
         return None, None
 
 def interpoler_valeur(lat_cible, lon_cible, df, n_neighbors=5):
-    """Extrapolation IDW"""
+    """
+    Extrapole la valeur ATXHWD pour l'adresse cible en utilisant 
+    l'Inverse Distance Weighting (IDW) sur les N voisins les plus proches.
+    """
+    # 1. Calcul des distances pour tous les points
+    # (On utilise une approximation rapide ici pour trier, puis geodesic pour la précision)
     df = df.copy()
-    # Approximation rapide pour trier
     df['dist_approx'] = (df['Latitude'] - lat_cible)**2 + (df['Longitude'] - lon_cible)**2
     
+    # 2. On prend les N plus proches
     neighbors = df.nsmallest(n_neighbors, 'dist_approx').copy()
     
-    # Calcul précis distance géodésique
+    # 3. Calcul précis des distances géodésiques (km)
     neighbors['distance_km'] = neighbors.apply(
         lambda row: geodesic((lat_cible, lon_cible), (row['Latitude'], row['Longitude'])).km, axis=1
     )
     
+    # 4. Calcul IDW (Moyenne pondérée par l'inverse de la distance au carré)
+    # On évite la division par zéro si on est pile sur un point
     neighbors['weight'] = 1 / (neighbors['distance_km'] + 0.001)**2
+    
     weighted_sum = (neighbors['ATXHWD'] * neighbors['weight']).sum()
     sum_of_weights = neighbors['weight'].sum()
     
@@ -150,11 +136,6 @@ def interpoler_valeur(lat_cible, lon_cible, df, n_neighbors=5):
 # --- 2. INTERFACE & CHARGEMENT ---
 with st.sidebar:
     st.header("🎛️ Paramètres")
-    
-    if st.button("Recharger les données"):
-        st.cache_data.clear()
-        st.rerun()
-
     df_total, erreur = charger_donnees(DOSSIER_DONNEES)
     
     if erreur or df_total.empty:
@@ -176,6 +157,7 @@ with st.sidebar:
     st.divider()
     st.write("Légende (ATXHWD)")
     
+    # Légende
     val_min = df_total['ATXHWD'].min()
     val_max = df_total['ATXHWD'].max()
     cmap = plt.get_cmap("coolwarm")
@@ -189,13 +171,14 @@ with st.sidebar:
 
 # --- 3. LOGIQUE PRINCIPALE ---
 
+# Préparation des données filtrées
 df_map = df_rcp[df_rcp['Horizon_Filter'] == choix_horizon].copy()
 
 if df_map.empty:
     st.warning("Pas de données pour cette sélection.")
     st.stop()
 
-# Barre de recherche
+# Barre de recherche (au-dessus de la carte)
 col_search, col_info = st.columns([3, 1])
 with col_search:
     adresse_recherche = st.text_input("🔍 Rechercher une adresse en France (ex: 15 rue de Rivoli, Paris)", "")
@@ -203,28 +186,30 @@ with col_search:
 user_lat, user_lon = None, None
 search_layer = None
 
+# Traitement de la recherche
 if adresse_recherche:
     user_lat, user_lon = geocode_address(adresse_recherche)
     
     if user_lat:
         st.success(f"Adresse trouvée : Latitude {user_lat:.4f}, Longitude {user_lon:.4f}")
         
+        # Création de la couche pour le pin utilisateur (VERT FLUO)
         search_data = pd.DataFrame({'lat': [user_lat], 'lon': [user_lon], 'name': ["Votre Adresse"]})
         search_layer = pdk.Layer(
             "ScatterplotLayer",
             data=search_data,
             get_position='[lon, lat]',
-            get_color='[0, 255, 0, 255]',
-            get_radius=8000,
+            get_color='[0, 255, 0, 255]', # Vert pur opaque
+            get_radius=8000, # Un peu plus gros que les autres
             pickable=True,
             stroked=True,
             get_line_color=[0, 0, 0],
             line_width_min_pixels=2
         )
     else:
-        st.error("Adresse introuvable.")
+        st.error("Adresse introuvable. Essayez d'être plus précis (Code postal, Ville).")
 
-# Couleurs
+# Calcul des couleurs pour la carte principale
 norm = mcolors.Normalize(vmin=val_min, vmax=val_max)
 colors = cmap(norm(df_map['ATXHWD'].values))
 df_map['r'] = (colors[:, 0] * 255).astype(int)
@@ -246,31 +231,33 @@ layers = [
 
 if search_layer:
     layers.append(search_layer)
+    # Si recherche, on centre sur l'adresse avec un zoom plus fort
     view_state = pdk.ViewState(latitude=user_lat, longitude=user_lon, zoom=8, pitch=0)
 else:
+    # Sinon vue globale
     view_state = pdk.ViewState(latitude=df_map['Latitude'].mean(), longitude=df_map['Longitude'].mean(), zoom=5.5, pitch=0)
 
 tooltip = {"html": "<b>ATXHWD:</b> {ATXHWD}<br><b>Point:</b> {Point}", "style": {"color": "white"}}
 
 st.pydeck_chart(pdk.Deck(map_style=None, initial_view_state=view_state, layers=layers, tooltip=tooltip))
 
-# --- 5. TABLEAUX D'ANALYSE ---
+# --- 5. TABLEAUX D'ANALYSE (SOUS LA CARTE) ---
 if user_lat and not df_map.empty:
     st.divider()
     st.subheader("📊 Analyse Locale")
     
+    # Calcul de l'interpolation et des voisins
     voisins, estimation = interpoler_valeur(user_lat, user_lon, df_map, n_neighbors=5)
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.info("📍 Point le plus proche")
-        # --- Sécurité ici pour éviter le KeyError ---
+        st.info("📍 Point de mesure le plus proche")
+        # Le plus proche est le 1er de la liste triée
         plus_proche = voisins.iloc[0]
-        nom_station = plus_proche.get('Point', 'Inconnu')
         
         st.metric(
-            label=f"Station : {nom_station}", 
+            label=f"Station : {plus_proche['Point']}", 
             value=f"{plus_proche['ATXHWD']:.2f}",
             delta=f"à {plus_proche['distance_km']:.1f} km"
         )
@@ -285,13 +272,10 @@ if user_lat and not df_map.empty:
         st.write("*Calculée par interpolation (pondération par distance) des 5 points les plus proches.*")
     
     st.write("---")
-    st.write("**Détail des 5 points utilisés :**")
+    st.write("**Détail des 5 points utilisés pour le calcul :**")
     
-    cols_to_show = ['Point', 'ATXHWD', 'distance_km', 'Latitude', 'Longitude']
-    # On filtre pour ne montrer que les colonnes qui existent vraiment
-    cols_existantes = [c for c in cols_to_show if c in voisins.columns]
-    
-    display_voisins = voisins[cols_existantes].copy()
+    # Nettoyage du tableau pour l'affichage
+    display_voisins = voisins[['Point', 'ATXHWD', 'distance_km', 'Latitude', 'Longitude']].copy()
     display_voisins['distance_km'] = display_voisins['distance_km'].map('{:.2f} km'.format)
     display_voisins['ATXHWD'] = display_voisins['ATXHWD'].map('{:.2f}'.format)
     
