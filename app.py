@@ -96,6 +96,7 @@ def charger_donnees(dossier):
 # ============================================
 
 data = charger_donnees(DOSSIER)
+st.dataframe(data)
 
 # ============================================
 # FILTRES
@@ -216,7 +217,7 @@ st.pydeck_chart(
 # ============================================
 # TABLEAUX + INTERPOLATION
 # ============================================
-
+st.dataframe(df2)
 if u_lat:
     df2["dist"] = df2.apply(
         lambda r: geodesic((u_lat, u_lon), (r["Latitude"], r["Longitude"])).km, axis=1
