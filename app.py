@@ -31,33 +31,6 @@ def lire_fichier(path):
     )
 
 @st.cache_data
-def charger_donnees_1(dossier):
-    all_df = []
-
-    for f in os.listdir(dossier):
-        if not f.endswith(".txt"):
-            continue
-
-        df = lire_fichier(os.path.join(dossier, f))
-        df.columns = [c.strip() for c in df.columns]
-
-        # standardisation des colonnes
-        for c in df.columns:
-            c2 = c.lower()
-            
-        # conversion numérique
-        df["Latitude"] = pd.to_numeric(df["Latitude"], errors="coerce")
-        df["Longitude"] = pd.to_numeric(df["Longitude"], errors="coerce")
-
-        for c in df.columns:
-            if c not in ["Latitude", "Longitude", "Point", "Contexte", "Période"]:
-                df[c] = pd.to_numeric(df[c].astype(str).str.replace(",", "."), errors="coerce")
-
-        all_df.append(df)
-
-    return pd.concat(all_df, ignore_index=True)
-
-@st.cache_data
 def charger_donnees(dossier):
     """
     Agrège tous les fichiers du dossier dans une table unique.
@@ -73,6 +46,8 @@ def charger_donnees(dossier):
 
         # Utilisation de votre fonction de lecture (assurez-vous qu'elle gère l'encodage)
         df = lire_fichier(os.path.join(dossier, f))
+        cols_unmatch = [c for c in final_df.columns if "Unnamed" in c]
+        df = df.drop(columns=cols_unmatch)
         df.columns = [c.strip() for c in df.columns]
 
         # Nettoyage et conversion numérique
@@ -105,7 +80,6 @@ def charger_donnees(dossier):
 # ============================================
 
 data = charger_donnees(DOSSIER)
-st.dataframe(data)
 
 # ============================================
 # FILTRES
@@ -226,7 +200,6 @@ st.pydeck_chart(
 # ============================================
 # TABLEAUX + INTERPOLATION
 # ============================================
-st.dataframe(df2)
 if u_lat:
     df2["dist"] = df2.apply(
         lambda r: geodesic((u_lat, u_lon), (r["Latitude"], r["Longitude"])).km, axis=1
