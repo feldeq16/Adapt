@@ -8,45 +8,30 @@ import matplotlib.colors as mcolors
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
-# ===================================
+# =====================================
 # CONFIG
-# ===================================
+# =====================================
 
 st.set_page_config(layout="wide", page_title="Climat Multi-Scénarios")
-st.title("🌍 Analyse climatique multi-scénarios")
+st.title("🌍 Analyse climatique")
 
 DOSSIER = "Données"
 
-# ===================================
-# SCENARIO
-# ===================================
-
-def extraire_scenario(nom):
-    n = nom.lower()
-    if "2.6" in n or "26" in n: return "RCP 2.6"
-    if "4.5" in n or "45" in n: return "RCP 4.5"
-    if "8.5" in n or "85" in n: return "RCP 8.5"
-    return "Autre"
-
-# ===================================
-# LECTURE PROPRE
-# ===================================
+# =====================================
+# LECTURE DES FICHIERS
+# =====================================
 
 def lire_fichier(path):
     return pd.read_csv(
         path,
-        sep=None,             # pandas détecte , ou ;
+        sep=None,
         engine="python",
-        comment="#",          # ignore les lignes #
+        comment="#",
         skip_blank_lines=True
     )
 
-# ===================================
-# AGGREGATION
-# ===================================
-
 @st.cache_data
-def charger_tous_les_fichiers(dossier):
+def charger_donnees(dossier):
     all_df = []
 
     for f in os.listdir(dossier):
@@ -55,7 +40,7 @@ def charger_tous_les_fichiers(dossier):
 
         df = lire_fichier(os.path.join(dossier, f))
 
-        # normalisation colonnes
+        # normalisation des noms
         df.columns = [c.strip() for c in df.columns]
 
         # renommage standard
@@ -65,45 +50,51 @@ def charger_tous_les_fichiers(dossier):
             if "lon" in c2: df.rename(columns={c:"Longitude"}, inplace=True)
             if "station" in c2 or "point" in c2: df.rename(columns={c:"Point"}, inplace=True)
 
-        df["Scenario"] = extraire_scenario(f)
-
-        # cast numérique
+        # conversion numérique
         df["Latitude"] = pd.to_numeric(df["Latitude"], errors="coerce")
         df["Longitude"] = pd.to_numeric(df["Longitude"], errors="coerce")
 
         for c in df.columns:
-            if c not in ["Latitude","Longitude","Point","Scenario"]:
+            if c not in ["Latitude","Longitude","Point","Contexte","Période"]:
                 df[c] = pd.to_numeric(df[c].astype(str).str.replace(",", "."), errors="coerce")
 
         all_df.append(df)
 
     return pd.concat(all_df, ignore_index=True)
 
-# ===================================
+# =====================================
 # DONNÉES
-# ===================================
+# =====================================
 
-data = charger_tous_les_fichiers(DOSSIER)
+data = charger_donnees(DOSSIER)
 
-# ===================================
+# =====================================
 # FILTRES
-# ===================================
+# =====================================
 
 with st.sidebar:
-    scenario = st.selectbox("Scénario", sorted(data["Scenario"].unique()))
-    df = data[data["Scenario"] == scenario]
+    st.header("Filtres")
 
-    variables = [c for c in df.columns if c not in ["Latitude","Longitude","Point","Scenario"]]
+    scenario = st.selectbox("Scénario", sorted(data["Contexte"].dropna().unique()))
+    df1 = data[data["Contexte"] == scenario]
+
+    horizon = st.selectbox("Horizon", sorted(df1["Période"].dropna().unique()))
+    df2 = df1[df1["Période"] == horizon]
+
+    meta = ["Latitude","Longitude","Point","Contexte","Période"]
+    variables = [c for c in df2.columns if c not in meta and pd.api.types.is_numeric_dtype(df2[c])]
+
     var = st.selectbox("Variable", variables)
 
-    df = df.dropna(subset=["Latitude","Longitude",var])
+    # suppression des lignes sans valeur
+    df2 = df2.dropna(subset=["Latitude","Longitude",var])
 
-    vmin = df[var].quantile(0.02)
-    vmax = df[var].quantile(0.98)
+    vmin = df2[var].quantile(0.02)
+    vmax = df2[var].quantile(0.98)
 
-# ===================================
+# =====================================
 # GEOCODAGE
-# ===================================
+# =====================================
 
 @st.cache_resource
 def get_geocoder():
@@ -126,24 +117,27 @@ if btn and adr:
     u_lat,u_lon = geocode(adr)
     if u_lat:
         st.success(f"{adr} → {u_lat:.3f},{u_lon:.3f}")
+    else:
+        st.warning("Adresse introuvable")
 
-# ===================================
+# =====================================
 # COULEURS
-# ===================================
+# =====================================
 
 cmap = plt.get_cmap("coolwarm")
 norm = mcolors.Normalize(vmin=vmin,vmax=vmax)
-rgb = (cmap(norm(df[var]))[:,:3]*255).astype(int)
+rgb = (cmap(norm(df2[var]))[:,:3]*255).astype(int)
 
-df["r"],df["g"],df["b"] = rgb[:,0],rgb[:,1],rgb[:,2]
+df2 = df2.copy()
+df2["r"],df2["g"],df2["b"] = rgb[:,0],rgb[:,1],rgb[:,2]
 
-# ===================================
+# =====================================
 # CARTE
-# ===================================
+# =====================================
 
 layers = [pdk.Layer(
     "ScatterplotLayer",
-    df,
+    df2,
     get_position="[Longitude,Latitude]",
     get_color="[r,g,b,160]",
     get_radius=3000,
@@ -156,7 +150,7 @@ if u_lat:
         pd.DataFrame({"lat":[u_lat],"lon":[u_lon]}),
         get_position="[lon,lat]",
         get_color="[0,255,0]",
-        get_radius=1000
+        get_radius=6000
     ))
 
 view = pdk.ViewState(
@@ -171,28 +165,34 @@ st.pydeck_chart(pdk.Deck(
     tooltip={"html":f"<b>{var}</b>: {{{var}}}"}
 ))
 
-# ===================================
-# INTERPOLATION
-# ===================================
+# =====================================
+# TABLEAUX CORRIGÉS
+# =====================================
 
 if u_lat:
-    df["dist"] = df.apply(lambda r: geodesic((u_lat,u_lon),(r["Latitude"],r["Longitude"])).km,axis=1)
-    voisins = df.nsmallest(5,"dist")
+    df2["dist"] = df2.apply(
+        lambda r: geodesic((u_lat,u_lon),(r["Latitude"],r["Longitude"])).km,
+        axis=1
+    )
 
-    W = 1/(voisins["dist"]+0.01)**2
-
-    interp = {}
-    for v in variables:
-        vals = voisins[v].values
-        mask = ~np.isnan(vals)
-        interp[v] = np.sum(vals[mask]*W.values[mask]) / np.sum(W.values[mask]) if mask.sum()>0 else np.nan
+    voisins = df2.nsmallest(5,"dist")
 
     c1,c2 = st.columns(2)
 
     with c1:
-        st.write("📍 Station la plus proche")
-        st.dataframe(voisins.iloc[:1][variables].T)
+        st.subheader("📍 Station la plus proche")
+        station = voisins.iloc[0]
+        st.dataframe(station[variables].to_frame("Valeur réelle"))
 
     with c2:
-        st.write("🧮 Valeurs interpolées")
+        st.subheader("🧮 Valeurs interpolées")
+
+        W = 1/(voisins["dist"]+0.01)**2
+
+        interp = {}
+        for v in variables:
+            vals = voisins[v].values
+            mask = ~np.isnan(vals)
+            interp[v] = np.sum(vals[mask]*W.values[mask]) / np.sum(W.values[mask]) if mask.sum()>0 else np.nan
+
         st.dataframe(pd.DataFrame(interp,index=["Estimation"]).T)
