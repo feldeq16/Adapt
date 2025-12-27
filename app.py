@@ -62,9 +62,9 @@ def charger_donnees(dossier):
     """
     Agrège tous les fichiers dans une table unique.
     L'identifiant unique est ['Point','Contexte','Période'].
-    Toutes les colonnes mesures sont empilées correctement.
+    Toutes les colonnes mesures sont empilées correctement sans duplication.
     """
-    final_df = pd.DataFrame()
+    final_df = None
     id_cols = ["Point", "Contexte", "Période"]
     latlon_cols = ["Latitude", "Longitude"]
 
@@ -75,21 +75,22 @@ def charger_donnees(dossier):
         df = lire_fichier(os.path.join(dossier, f))
         df.columns = [c.strip() for c in df.columns]
 
-        # Conversion numérique
+        # Conversion numérique pour les colonnes de mesures
         for c in df.columns:
             if c in latlon_cols:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
             elif c not in id_cols:
                 df[c] = pd.to_numeric(df[c].astype(str).str.replace(",", "."), errors="coerce")
 
-        # Vérifier les colonnes déjà existantes
-        cols_to_use = id_cols + latlon_cols + [c for c in df.columns if c not in id_cols + latlon_cols]
-        
-        # On empile les lignes
-        final_df = pd.concat([final_df, df[cols_to_use]], ignore_index=True)
+        # Si final_df est vide, on initialise avec le premier DataFrame
+        if final_df is None:
+            final_df = df
+        else:
+            # On fait une jointure sur les colonnes id (Point, Contexte, Période)
+            final_df = pd.merge(final_df, df, on=id_cols + latlon_cols, how="outer")
 
+    # Retourner le DataFrame final avec toutes les variables
     return final_df
-
 
 # ============================================
 # DONNÉES
