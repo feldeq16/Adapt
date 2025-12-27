@@ -68,7 +68,7 @@ def charger_donnees(dossier):
                 
                 # Normalisation de la colonne Horizon/Période
                 # On cherche une colonne qui contient "Période" ou "Horizon"
-                col_horizon = next((c for c in df.columns if 'période' in c.lower() or 'horizon' in c.lower()), None)
+                col_horizon = 'Période'
                 if col_horizon:
                     df['Horizon_Filter'] = df[col_horizon].astype(str).str.strip()
                 else:
