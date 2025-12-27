@@ -2,4 +2,6 @@ streamlit
 pandas
 pydeck
 matplotlib
+geopy
+scipy
 numpy
