@@ -1,18 +1,18 @@
 import streamlit as st
 import pandas as pd
+import pydeck as pdk
 import os
 
-# --- CONFIGURATION STRICTE ---
+# --- CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="Mon Portail Cartographique")
-st.title("🗺️ Visualisation Haute Performance")
+st.title("🗺️ Visualisation Haute Performance (PyDeck)")
 
 DOSSIER_DONNEES = 'Données'
 
-# --- FONCTION DE CHARGEMENT ---
+# --- CHARGEMENT DES DONNÉES ---
 @st.cache_data(ttl=3600)
-def charger_donnees_natives(dossier):
-    # On va créer un seul gros tableau avec toutes les données
-    # C'est beaucoup plus efficace pour st.map que plein de petits fichiers
+def charger_donnees_rapides(dossier, max_points):
+    """Charge les données de manière optimisée pour PyDeck"""
     all_data = []
     
     if not os.path.exists(dossier):
@@ -20,49 +20,50 @@ def charger_donnees_natives(dossier):
     
     fichiers = [f for f in os.listdir(dossier) if f.endswith('.txt')]
     
-    # Barre de progression
-    progression = st.progress(0)
+    # Couleurs pour distinguer les fichiers (RGB)
+    couleurs = [
+        [255, 0, 0],   # Rouge
+        [0, 255, 0],   # Vert
+        [0, 0, 255],   # Bleu
+        [255, 165, 0], # Orange
+        [128, 0, 128]  # Violet
+    ]
     
     for i, fichier in enumerate(fichiers):
         chemin = os.path.join(dossier, fichier)
         try:
-            # On lit tout mais uniquement les colonnes GPS
-            # st.map a besoin de colonnes nommées 'latitude' et 'longitude' ou 'lat'/'lon'
+            # On lit le fichier
             df = pd.read_csv(
                 chemin, 
                 sep=';', 
                 comment='#', 
                 encoding='latin-1',
                 engine='python',
-                usecols=lambda c: 'lat' in c.lower() or 'lon' in c.lower() or 'lng' in c.lower()
+                nrows=max_points # <--- Sécurité : on charge max X points
             )
             
-            # Nettoyage
-            df.columns = [c.strip().lower() for c in df.columns]
+            # Nettoyage colonnes
+            df.columns = [c.strip() for c in df.columns]
             
-            # Renommage standard pour que Streamlit comprenne
-            df = df.rename(columns={'latitude': 'lat', 'longitude': 'lon'})
-            
-            # On vérifie qu'on a bien lat et lon
-            if 'lat' in df.columns and 'lon' in df.columns:
-                # On nettoie les erreurs (virgules au lieu de points, etc)
-                df['lat'] = pd.to_numeric(df['lat'], errors='coerce')
-                df['lon'] = pd.to_numeric(df['lon'], errors='coerce')
-                df = df.dropna()
+            # Vérification Lat/Lon
+            if 'Latitude' in df.columns and 'Longitude' in df.columns:
+                # Conversion numérique
+                df['Latitude'] = pd.to_numeric(df['Latitude'], errors='coerce')
+                df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
+                df = df.dropna(subset=['Latitude', 'Longitude'])
                 
-                # On ajoute une colonne pour identifier la source (optionnel)
-                # df['source'] = fichier 
+                # On attribue une couleur à ce fichier
+                color = couleurs[i % len(couleurs)]
+                df['color_r'] = color[0]
+                df['color_g'] = color[1]
+                df['color_b'] = color[2]
+                df['source'] = fichier
                 
                 all_data.append(df)
-        
+                
         except Exception as e:
             print(f"Erreur {fichier}: {e}")
             
-        # Mise à jour de la barre
-        progression.progress((i + 1) / len(fichiers))
-
-    progression.empty()
-    
     if all_data:
         return pd.concat(all_data, ignore_index=True)
     else:
@@ -70,21 +71,56 @@ def charger_donnees_natives(dossier):
 
 # --- INTERFACE ---
 with st.sidebar:
-    st.header("Données")
-    st.write("Chargement en mode 'Big Data'...")
+    st.header("🚀 Contrôle Performance")
     
-    df_final = charger_donnees_natives(DOSSIER_DONNEES)
+    # Curseur pour gérer la charge
+    # On commence à 2000 pour être sûr que ça s'affiche, vous pourrez monter après
+    nb_points = st.slider("Points par fichier (Max)", 100, 8000, 2000)
     
-    if not df_final.empty:
-        st.success(f"✅ {len(df_final)} points affichés !")
-        st.info("Utilisation de la technologie DeckGL (Native) pour la performance.")
+    st.write("Chargement des données...")
+    df_map = charger_donnees_rapides(DOSSIER_DONNEES, nb_points)
+    
+    if not df_map.empty:
+        st.success(f"✅ {len(df_map)} points chargés au total.")
+        st.info("Rouge/Vert/Bleu selon le fichier.")
     else:
-        st.error("Aucune donnée valide trouvée.")
+        st.error("Aucune donnée.")
 
-# --- AFFICHAGE CARTE NATIVE ---
-# st.map est incapable de planter, même avec 1 million de points
-# Par contre, c'est juste des points (pas de clic pour l'instant)
-if not df_final.empty:
-    st.map(df_final, size=20, color='#0044ff')
+# --- CARTE PYDECK (GPU) ---
+# C'est ici que la magie opère : PyDeck gère des milliers de points sans ramer
+if not df_map.empty:
+    
+    # Configuration de la vue initiale (centrée sur la moyenne des points)
+    view_state = pdk.ViewState(
+        latitude=df_map['Latitude'].mean(),
+        longitude=df_map['Longitude'].mean(),
+        zoom=5,
+        pitch=0,
+    )
+
+    # Création de la couche de points (Scatterplot)
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=df_map,
+        get_position='[Longitude, Latitude]',
+        get_color='[color_r, color_g, color_b, 160]', # Couleur + Transparence
+        get_radius=5000, # Rayon en mètres
+        pickable=True,   # Permet de cliquer (info-bulle)
+    )
+
+    # Tooltip (Info-bulle au survol)
+    tooltip = {
+        "html": "<b>Source:</b> {source}<br><b>Lat:</b> {Latitude}<br><b>Lon:</b> {Longitude}",
+        "style": {"backgroundColor": "steelblue", "color": "white"}
+    }
+
+    # Rendu de la carte
+    st.pydeck_chart(pdk.Deck(
+        map_style='mapbox://styles/mapbox/light-v9', # Style léger
+        initial_view_state=view_state,
+        layers=[layer],
+        tooltip=tooltip
+    ))
+
 else:
     st.write("En attente de données...")
