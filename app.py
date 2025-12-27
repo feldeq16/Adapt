@@ -101,61 +101,45 @@ def charger_donnees(dossier):
     barre.empty()
     return all_data, None
 
-# --- FONCTION MAGIQUE : GÉNÉRATION IMAGE INTERPOLÉE ---
+# --- GÉNÉRATION IMAGE INTERPOLÉE ---
 @st.cache_data(show_spinner=False)
 def generer_image_interpolated(df, val_min, val_max):
-    """
-    Crée une image PNG transparente interpolée (carte de chaleur)
-    à partir des points et renvoie l'image en base64 + les coordonnées.
-    """
-    # 1. Définition de la grille (Résolution 100x100 points pour la rapidité)
+    """Génère l'image Heatmap"""
+    # 1. Grille
     grid_x, grid_y = np.mgrid[
-        df['Longitude'].min():df['Longitude'].max():150j, 
-        df['Latitude'].min():df['Latitude'].max():150j
+        df['Longitude'].min():df['Longitude'].max():100j, 
+        df['Latitude'].min():df['Latitude'].max():100j
     ]
     
     points = df[['Longitude', 'Latitude']].values
     values = df['ATXHWD'].values
     
-    # 2. Interpolation (Linear = rapide et triangle, Cubic = plus courbe mais lent)
-    # 'linear' remplit bien les trous entre les points
+    # 2. Interpolation
     grid_z = griddata(points, values, (grid_x, grid_y), method='linear')
-    
-    # 3. Création de l'image avec Matplotlib
-    # On transpose (.T) car griddata sort en (x, y) et imshow attend (row, col)
     grid_z = grid_z.T 
     
-    # Normalisation des couleurs
+    # 3. Couleurs
     norm = mcolors.Normalize(vmin=val_min, vmax=val_max)
     cmap = plt.get_cmap("coolwarm")
-    
-    # Application de la colormap -> Donne un tableau (H, W, 4) RGBA
     image_data = cmap(norm(grid_z))
     
-    # Rendre transparents les pixels NaN (là où il n'y a pas de données, ex: mer)
-    image_data[np.isnan(grid_z), 3] = 0.0  # Alpha channel à 0
-    # Rendre le reste un peu transparent (0.7) pour voir le fond de carte
+    # Transparence
+    image_data[np.isnan(grid_z), 3] = 0.0 
     image_data[~np.isnan(grid_z), 3] = 0.75 
 
-    # 4. Sauvegarde en mémoire
-    image_data = (image_data * 255).astype(np.uint8) # Conversion 0-255
-    img =  pd.DataFrame() # Dummy
-    
-    # Astuce pour passer l'image à PyDeck : Base64
-    pil_image = plt.imsave(io.BytesIO(), image_data, format='png')
-    
-    # On recrée proprement le buffer
+    # 4. Conversion Base64 (Correction ici pour éviter l'erreur JS)
+    image_data = (image_data * 255).astype(np.uint8)
     buffer = io.BytesIO()
     plt.imsave(buffer, image_data, format='png')
     buffer.seek(0)
-    b64_string = base64.b64encode(buffer.read()).decode()
+    b64_string = base64.b64encode(buffer.read()).decode('utf-8')
     
-    # Coordonnées pour plaquer l'image sur la carte (Bounding Box)
+    # Bounds en float python pur pour éviter erreur JSON
     bounds = [
-        df['Longitude'].min(), # Ouest
-        df['Latitude'].min(),  # Sud
-        df['Longitude'].max(), # Est
-        df['Latitude'].max()   # Nord
+        float(df['Longitude'].min()),
+        float(df['Latitude'].min()),
+        float(df['Longitude'].max()),
+        float(df['Latitude'].max())
     ]
     
     return f"data:image/png;base64,{b64_string}", bounds
@@ -164,7 +148,7 @@ def generer_image_interpolated(df, val_min, val_max):
 @st.cache_data
 def geocode_address(address):
     try:
-        geolocator = Nominatim(user_agent="app_clim_v3")
+        geolocator = Nominatim(user_agent="app_clim_v4_fix")
         loc = geolocator.geocode(address)
         return (loc.latitude, loc.longitude) if loc else (None, None)
     except: return None, None
@@ -219,32 +203,31 @@ if adr:
     if u_lat: st.success("Adresse trouvée !")
     else: st.error("Introuvable")
 
-# GÉNÉRATION DU FOND DE CARTE (IMAGE)
+# Génération Gradient
 with st.spinner("Génération du gradient..."):
-    # On génère l'image basée uniquement sur les données filtrées
     img_b64, bounds = generer_image_interpolated(df_map, vmin, vmax)
 
-# COUCHES PYDECK
 layers = []
 
-# 1. Couche de fond (L'image interpolée)
+# 1. Couche Image (CORRECTIF APPLIQUÉ : pickable=False)
 bitmap_layer = pdk.Layer(
     "BitmapLayer",
     image=img_b64,
     bounds=bounds,
-    opacity=0.8 # Transparence globale de l'image
+    opacity=0.8,
+    pickable=False # <--- INDISPENSABLE POUR ÉVITER L'ERREUR ":"
 )
 layers.append(bitmap_layer)
 
-# 2. Couche Pin Utilisateur (si recherche)
+# 2. Pin Utilisateur
 if u_lat:
     user_data = pd.DataFrame({'lat': [u_lat], 'lon': [u_lon]})
     pin_layer = pdk.Layer(
         "ScatterplotLayer",
         data=user_data,
         get_position='[lon, lat]',
-        get_color='[0, 255, 0]', # Vert fluo
-        get_radius=8000,
+        get_color='[0, 255, 0]',
+        get_radius=6000,
         stroked=True,
         get_line_color=[0,0,0],
         line_width_min_pixels=3,
@@ -255,15 +238,15 @@ if u_lat:
 else:
     view = pdk.ViewState(latitude=df_map['Latitude'].mean(), longitude=df_map['Longitude'].mean(), zoom=5.5)
 
-# 3. (Optionnel) Couche de points invisibles pour le Tooltip
-# Pour qu'on puisse quand même voir la valeur en survolant (même si on ne voit pas le point)
+# 3. Points transparents pour le Tooltip
 point_layer = pdk.Layer(
     "ScatterplotLayer",
     data=df_map,
     get_position='[Longitude, Latitude]',
-    get_radius=500, # Petit rayon
-    get_color=[0,0,0,0], # Totalement transparent
-    pickable=True
+    get_radius=1000,
+    get_color=[0,0,0,0],
+    pickable=True, # Seuls les points sont cliquables, pas l'image
+    auto_highlight=True
 )
 layers.append(point_layer)
 
