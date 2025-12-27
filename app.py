@@ -181,7 +181,7 @@ data_layer = pdk.Layer(
     data=df_map,
     get_position=['Longitude', 'Latitude'],
     get_color=['r', 'g', 'b', 160],
-    get_radius=2000,
+    get_radius=3000,
     pickable=True,
     auto_highlight=True
 )
@@ -195,7 +195,7 @@ if u_lat:
         data=user_data,
         get_position='[lon, lat]',
         get_color='[0, 255, 0]', # VERT FLUO
-        get_radius=5000,
+        get_radius=1000,
         stroked=True,
         get_line_color=[0, 0, 0],
         line_width_min_pixels=3,
