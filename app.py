@@ -31,7 +31,7 @@ def lire_fichier(path):
     )
 
 @st.cache_data
-def charger_donnees(dossier):
+def charger_donnees_1(dossier):
     all_df = []
 
     for f in os.listdir(dossier):
@@ -44,13 +44,7 @@ def charger_donnees(dossier):
         # standardisation des colonnes
         for c in df.columns:
             c2 = c.lower()
-            if "lat" in c2:
-                df.rename(columns={c: "Latitude"}, inplace=True)
-            if "lon" in c2:
-                df.rename(columns={c: "Longitude"}, inplace=True)
-            if "station" in c2 or "point" in c2:
-                df.rename(columns={c: "Point"}, inplace=True)
-
+            
         # conversion numérique
         df["Latitude"] = pd.to_numeric(df["Latitude"], errors="coerce")
         df["Longitude"] = pd.to_numeric(df["Longitude"], errors="coerce")
@@ -62,6 +56,40 @@ def charger_donnees(dossier):
         all_df.append(df)
 
     return pd.concat(all_df, ignore_index=True)
+
+@st.cache_data
+def charger_donnees(dossier):
+    final_df = None  # DataFrame final
+    id_cols = ["Point", "Contexte", "Période"]  # identifiant unique
+    latlon_cols = ["Latitude", "Longitude"]
+
+    for f in os.listdir(dossier):
+        if not f.endswith(".txt"):
+            continue
+
+        df = lire_fichier(os.path.join(dossier, f))
+        df.columns = [c.strip() for c in df.columns]
+
+        # Conversion numérique
+        for c in df.columns:
+            if c in latlon_cols:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+            elif c not in id_cols:
+                df[c] = pd.to_numeric(df[c].astype(str).str.replace(",", "."), errors="coerce")
+
+        # Si DataFrame final vide, on prend les colonnes id + mesures
+        if final_df is None:
+            final_df = df
+        else:
+            # Merge sur l'identifiant unique
+            final_df = pd.merge(
+                final_df,
+                df,
+                on=id_cols + latlon_cols,  # merge sur l'identifiant + lat/lon
+                how="outer"
+            )
+
+    return final_df
 
 # ============================================
 # DONNÉES
