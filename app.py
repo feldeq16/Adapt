@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import numpy as np
 import unicodedata
-import uuid # Pour l'identifiant unique
+import uuid
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
@@ -88,43 +88,31 @@ def charger_donnees(dossier):
     barre.empty()
     return all_data, None
 
-# --- FONCTION GÉOCODAGE ROBUSTE ---
+# --- GÉOCODAGE ---
 @st.cache_data
 def geocode_address(address):
-    """Géocodage via OSM avec User-Agent aléatoire + Timeout"""
     try:
-        # Identifiant unique pour éviter le blocage 403 Forbidden
         unique_agent = f"climate_app_{uuid.uuid4()}"
         geolocator = Nominatim(user_agent=unique_agent)
-        
-        # Timeout augmenté à 10s
         location = geolocator.geocode(address, timeout=10)
-        
         if location:
             return location.latitude, location.longitude
         return None, None
     except Exception as e:
-        print(f"Erreur Geo: {e}")
         return None, None
 
 def interpoler_valeur(lat, lon, df, n=5):
-    """Calcul des voisins proches (Interpolation IDW)"""
     df = df.copy()
-    # Approximation rapide
     df['d_approx'] = (df['Latitude']-lat)**2 + (df['Longitude']-lon)**2
     neighbors = df.nsmallest(n, 'd_approx').copy()
-    
-    # Calcul précis
     neighbors['dist_km'] = neighbors.apply(lambda r: geodesic((lat,lon), (r['Latitude'], r['Longitude'])).km, axis=1)
-    
-    # Pondération
     neighbors['w'] = 1 / (neighbors['dist_km'] + 0.001)**2
     est = (neighbors['ATXHWD']*neighbors['w']).sum() / neighbors['w'].sum()
     return neighbors, est
 
 # --- INTERFACE ---
 with st.sidebar:
-    st.header("🎛️ Filtres")
+    st.header("🎛️ Filtres Données")
     df_tot, err = charger_donnees(DOSSIER_DONNEES)
     if err or df_tot.empty: st.error("Pas de données"); st.stop()
 
@@ -137,6 +125,22 @@ with st.sidebar:
     horizon = st.radio("Période :", horizons)
     
     st.divider()
+    
+    # --- NOUVEAU : SÉLECTEUR DE FOND DE CARTE ---
+    st.header("🗺️ Options d'affichage")
+    
+    styles_dispo = {
+        "Clair (Recommandé)": "mapbox://styles/mapbox/light-v9",
+        "Sombre (Dark)": "mapbox://styles/mapbox/dark-v9",
+        "Satellite": "mapbox://styles/mapbox/satellite-v9",
+        "Rues (Streets)": "mapbox://styles/mapbox/streets-v11",
+        "Outdoors": "mapbox://styles/mapbox/outdoors-v11"
+    }
+    
+    choix_style = st.selectbox("Style de carte :", list(styles_dispo.keys()))
+    style_url = styles_dispo[choix_style] # On récupère l'URL technique
+
+    st.divider()
     # Légende
     vmin, vmax = df_tot['ATXHWD'].min(), df_tot['ATXHWD'].max()
     cmap = plt.get_cmap("coolwarm")
@@ -148,11 +152,10 @@ with st.sidebar:
     st.write(f"Min: {vmin:.1f} | Max: {vmax:.1f}")
     st.pyplot(fig)
 
-# --- PRÉPARATION DES DONNÉES ---
+# --- PRÉPARATION ---
 df_map = df_rcp[df_rcp['Horizon_Filter'] == horizon].copy()
 if df_map.empty: st.warning("Sélection vide"); st.stop()
 
-# Gestion des couleurs (Bleu -> Rouge)
 norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
 colors = cmap(norm(df_map['ATXHWD'].values))
 df_map['r'] = (colors[:, 0] * 255).astype(int)
@@ -170,12 +173,11 @@ if adr:
     if u_lat:
         st.success(f"📍 Localisé : {u_lat:.4f}, {u_lon:.4f}")
     else:
-        st.error("Adresse introuvable (Service surchargé ou adresse incorrecte).")
+        st.error("Adresse introuvable.")
 
-# --- COUCHES PYDECK ---
+# --- CARTE ---
 layers = []
 
-# 1. Données
 data_layer = pdk.Layer(
     "ScatterplotLayer",
     data=df_map,
@@ -187,14 +189,13 @@ data_layer = pdk.Layer(
 )
 layers.append(data_layer)
 
-# 2. Utilisateur
 if u_lat:
     user_data = pd.DataFrame({'lat': [u_lat], 'lon': [u_lon]})
     user_layer = pdk.Layer(
         "ScatterplotLayer",
         data=user_data,
         get_position='[lon, lat]',
-        get_color='[0, 255, 0]', # VERT FLUO
+        get_color='[0, 255, 0]', 
         get_radius=1000,
         stroked=True,
         get_line_color=[0, 0, 0],
@@ -202,27 +203,22 @@ if u_lat:
         pickable=False
     )
     layers.append(user_layer)
-    
-    # Zoom forcé sur l'utilisateur
     view_state = pdk.ViewState(latitude=u_lat, longitude=u_lon, zoom=11, pitch=0)
 else:
-    # Vue globale
     view_state = pdk.ViewState(latitude=df_map['Latitude'].mean(), longitude=df_map['Longitude'].mean(), zoom=5.5, pitch=0)
 
-# --- AFFICHAGE CARTE ---
+# --- RENDU AVEC LE STYLE CHOISI ---
 st.pydeck_chart(pdk.Deck(
-    map_style="mapbox://styles/mapbox/light-v9",
+    map_style=style_url, # <--- C'est ici que le changement s'applique
     initial_view_state=view_state,
     layers=layers,
     tooltip={"html": "<b>ATXHWD:</b> {ATXHWD}<br><b>Station:</b> {Point}"}
 ))
 
-# --- TABLEAUX DE RÉSULTATS ---
+# --- ANALYSE ---
 if u_lat:
     st.divider()
-    # CORRECTION ICI : On appelle bien 'interpoler_valeur' et non plus 'interpoler_local'
     voisins, val_est = interpoler_valeur(u_lat, u_lon, df_map)
-    
     c1, c2 = st.columns(2)
     p_proche = voisins.iloc[0]
     
