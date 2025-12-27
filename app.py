@@ -6,12 +6,13 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import numpy as np
 import unicodedata
+import uuid # Pour générer un identifiant unique
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="Analyse Climatique")
-st.title("🌡️ Analyse Climatique (Points & Recherche)")
+st.title("🌡️ Analyse Climatique & Recherche d'Adresse")
 
 DOSSIER_DONNEES = 'Données'
 
@@ -23,8 +24,8 @@ def remove_accents(input_str):
 
 def trouver_header_et_lire(chemin):
     """Lecture robuste avec détection d'encodage."""
-    encodages = ['utf-8', 'latin-1', 'cp1252']
-    for enc in encodages:
+    encodages_a_tester = ['utf-8', 'latin-1', 'cp1252']
+    for enc in encodages_a_tester:
         try:
             with open(chemin, 'r', encoding=enc) as f:
                 lignes = [f.readline() for _ in range(50)]
@@ -87,16 +88,25 @@ def charger_donnees(dossier):
     barre.empty()
     return all_data, None
 
-# --- FONCTIONS RECHERCHE & INTERPOLATION ---
+# --- FONCTION GÉOCODAGE ROBUSTE ---
 @st.cache_data
 def geocode_address(address):
-    """Géocodage via OSM"""
+    """Géocodage via OSM avec User-Agent aléatoire pour éviter le blocage"""
     try:
-        # User-agent unique indispensable pour ne pas être bloqué
-        geolocator = Nominatim(user_agent="app_climat_points_v1")
-        loc = geolocator.geocode(address)
-        return (loc.latitude, loc.longitude) if loc else (None, None)
-    except: return None, None
+        # On crée un identifiant unique à chaque démarrage pour ne pas être bloqué
+        unique_agent = f"climate_app_{uuid.uuid4()}"
+        
+        geolocator = Nominatim(user_agent=unique_agent)
+        
+        # On ajoute un timeout de 10 secondes
+        location = geolocator.geocode(address, timeout=10)
+        
+        if location:
+            return location.latitude, location.longitude
+        return None, None
+    except Exception as e:
+        print(f"Erreur Geo: {e}")
+        return None, None
 
 def interpoler_valeur(lat, lon, df, n=5):
     """Calcul des voisins proches"""
@@ -156,7 +166,7 @@ if adr:
     if u_lat:
         st.success(f"📍 Localisé : {u_lat:.4f}, {u_lon:.4f}")
     else:
-        st.error("Adresse introuvable.")
+        st.error("Adresse introuvable (Service surchargé ou adresse incorrecte).")
 
 # --- COUCHES PYDECK (L'ordre est important) ---
 layers = []
@@ -189,7 +199,7 @@ if u_lat:
     )
     layers.append(user_layer)
     
-    # *** LE FIX EST ICI : VIEW STATE DYNAMIQUE ***
+    # *** VIEW STATE DYNAMIQUE ***
     # Si on a une adresse, on zoom fort dessus (Zoom 11)
     view_state = pdk.ViewState(
         latitude=u_lat, 
