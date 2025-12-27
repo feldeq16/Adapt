@@ -5,11 +5,11 @@ import os
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import numpy as np
+import unicodedata
 
 # --- 1. CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="Analyse Climatique", initial_sidebar_state="expanded")
 
-# Titre et Style
 st.title("🌡️ Analyse des Indices Climatiques (ATXHWD)")
 st.markdown("""
 <style>
@@ -19,6 +19,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 DOSSIER_DONNEES = 'Données'
+
+# Fonction pour enlever les accents (Période -> periode) pour la comparaison
+def remove_accents(input_str):
+    nfkd_form = unicodedata.normalize('NFKD', input_str)
+    return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
 
 # --- 2. FONCTION DE CHARGEMENT ---
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -36,28 +41,46 @@ def charger_donnees(dossier):
         barre.progress((i)/len(fichiers))
         
         try:
-            # Lecture
+            # Lecture (latin-1 gère bien les accents français Windows)
             df = pd.read_csv(chemin, sep=';', comment='#', encoding='latin-1', engine='python')
             
-            # Nettoyage Colonnes
+            # Nettoyage des noms de colonnes
             df.columns = [c.strip() for c in df.columns]
             
-            # Détection RCP dans le nom du fichier
-            if "RCP2.6" in fichier or "rcp26" in fichier:
+            # --- DÉTECTION ROBUSTE DE LA COLONNE PÉRIODE ---
+            col_periode_trouvee = None
+            for col in df.columns:
+                # On nettoie le nom de la colonne (minuscule + sans accent)
+                col_clean = remove_accents(col.lower())
+                if 'periode' in col_clean or 'horizon' in col_clean:
+                    col_periode_trouvee = col
+                    break
+            
+            if col_periode_trouvee:
+                # On standardise le contenu
+                df['Horizon_Filter'] = df[col_periode_trouvee].astype(str).str.strip()
+            else:
+                # Si introuvable, on le signale mais on ne plante pas
+                df['Horizon_Filter'] = "Non défini"
+
+            # --- DÉTECTION SCÉNARIO RCP ---
+            # On cherche dans le nom du fichier
+            nom_min = fichier.lower()
+            if "rcp2.6" in nom_min or "rcp26" in nom_min:
                 df['Scenario'] = "RCP 2.6"
-            elif "RCP4.5" in fichier or "rcp45" in fichier:
+            elif "rcp4.5" in nom_min or "rcp45" in nom_min:
                 df['Scenario'] = "RCP 4.5"
-            elif "RCP8.5" in fichier or "rcp85" in fichier:
+            elif "rcp8.5" in nom_min or "rcp85" in nom_min:
                 df['Scenario'] = "RCP 8.5"
             else:
                 df['Scenario'] = "Autre"
 
-            # Vérification colonnes vitales
+            # --- CONVERSION ET NETTOYAGE ---
             if {'Latitude', 'Longitude', 'ATXHWD'}.issubset(df.columns):
-                # Conversion numérique
                 df['Latitude'] = pd.to_numeric(df['Latitude'], errors='coerce')
                 df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
-                # Gestion des virgules potentielles dans les données scientifiques
+                
+                # Gestion virgule/point pour ATXHWD
                 if df['ATXHWD'].dtype == object:
                      df['ATXHWD'] = pd.to_numeric(df['ATXHWD'].str.replace(',', '.'), errors='coerce')
                 else:
@@ -66,101 +89,87 @@ def charger_donnees(dossier):
                 df = df.dropna(subset=['Latitude', 'Longitude', 'ATXHWD'])
                 df['Source'] = fichier
                 
-                # Normalisation de la colonne Horizon/Période
-                # On cherche une colonne qui contient "Période" ou "Horizon"
-                col_horizon = 'Période'
-                if col_horizon:
-                    df['Horizon_Filter'] = df[col_horizon].astype(str).str.strip()
-                else:
-                    df['Horizon_Filter'] = "Inconnu"
-
                 all_data = pd.concat([all_data, df], ignore_index=True)
                 
-        except Exception:
+        except Exception as e:
+            print(f"Erreur {fichier}: {e}")
             continue
             
     barre.empty()
     return all_data, None
 
-# --- 3. BARRE LATÉRALE (FILTRES) ---
+# --- 3. INTERFACE ---
 with st.sidebar:
     st.header("🎛️ Paramètres")
     
-    # Chargement
+    # Bouton reset cache (utile si bug)
+    if st.button("Recharger les données"):
+        st.cache_data.clear()
+        st.rerun()
+
     df_total, erreur = charger_donnees(DOSSIER_DONNEES)
+    
     if erreur:
         st.error(erreur)
         st.stop()
         
     if df_total.empty:
-        st.warning("Aucune donnée valide.")
+        st.warning("Aucune donnée valide trouvée.")
         st.stop()
 
-    st.subheader("1. Scénario RCP")
-    # Récupération des scénarios dispos
-    scenarios_dispos = sorted(df_total['Scenario'].unique())
-    choix_rcp = st.radio("Choisir le scénario d'émission :", scenarios_dispos)
+    # Filtre 1 : RCP
+    scenarios = sorted(df_total['Scenario'].unique())
+    choix_rcp = st.radio("1. Scénario d'émission :", scenarios)
 
-    st.subheader("2. Horizon Temporel")
-    # Récupération des horizons dispos pour ce scénario
+    # Filtre 2 : Horizon (Filtré selon le RCP choisi pour éviter les options vides)
     df_rcp = df_total[df_total['Scenario'] == choix_rcp]
-    horizons_dispos = sorted(df_rcp['Horizon_Filter'].unique())
     
-    if not horizons_dispos:
-        st.error("Colonne Période/Horizon introuvable dans le fichier.")
+    horizons = sorted(df_rcp['Horizon_Filter'].unique())
+    if not horizons or (len(horizons) == 1 and horizons[0] == "Non défini"):
+        st.error("⚠️ Colonne 'Période' non détectée dans les fichiers.")
         choix_horizon = None
     else:
-        choix_horizon = st.radio("Choisir la période :", horizons_dispos)
+        choix_horizon = st.radio("2. Horizon temporel :", horizons)
 
     st.divider()
     
-    # Légende du Gradient
-    st.subheader("Légende (ATXHWD)")
-    st.write("Indicateur de chaleur")
+    # Légende
+    val_min = df_total['ATXHWD'].min()
+    val_max = df_total['ATXHWD'].max()
     
-    # Création d'une barre de couleur visuelle pour la sidebar
-    cmap = plt.get_cmap("coolwarm") # Bleu -> Rouge
+    st.write(f"**Légende (ATXHWD)**")
+    st.write(f"Min global: {val_min:.1f} | Max global: {val_max:.1f}")
+    
+    cmap = plt.get_cmap("coolwarm")
     gradient = np.linspace(0, 1, 256)
     gradient = np.vstack((gradient, gradient))
-    fig, ax = plt.subplots(figsize=(4, 0.5))
+    fig, ax = plt.subplots(figsize=(4, 0.4))
     ax.imshow(gradient, aspect='auto', cmap=cmap)
     ax.set_axis_off()
     st.pyplot(fig)
-    
-    # Calcul des min/max globaux pour que la couleur soit comparable entre scénarios
-    val_min = df_total['ATXHWD'].min()
-    val_max = df_total['ATXHWD'].max()
-    st.write(f"Min: {val_min:.1f} | Max: {val_max:.1f}")
 
-# --- 4. FILTRAGE ET CALCUL COULEUR ---
+# --- 4. CARTE ---
+
+# Application des filtres
 if choix_horizon:
     df_map = df_rcp[df_rcp['Horizon_Filter'] == choix_horizon].copy()
 else:
     df_map = pd.DataFrame()
 
 if not df_map.empty:
-    # Fonction pour convertir une valeur en couleur RGB
+    # Calcul des couleurs
     norm = mcolors.Normalize(vmin=val_min, vmax=val_max)
     
-    # On applique la colormap "coolwarm" (Bleu=Frais, Rouge=Chaud)
-    # On peut changer par 'YlOrRd' (Jaune-Orange-Rouge) ou 'viridis'
-    def get_color(val):
-        rgba = cmap(norm(val))
-        return [int(rgba[0]*255), int(rgba[1]*255), int(rgba[2]*255), 180] # 180 = Opacité
-
-    # Application vectorisée (rapide)
-    # On pré-calcule les couleurs
     colors = cmap(norm(df_map['ATXHWD'].values))
     df_map['r'] = (colors[:, 0] * 255).astype(int)
     df_map['g'] = (colors[:, 1] * 255).astype(int)
     df_map['b'] = (colors[:, 2] * 255).astype(int)
 
-    # --- 5. AFFICHAGE CARTE ---
-    
-    # Statistique rapide
-    moyenne = df_map['ATXHWD'].mean()
-    st.info(f"**{len(df_map)} points** affichés pour **{choix_rcp} / {choix_horizon}**. Moyenne ATXHWD : **{moyenne:.2f}**")
+    # Stats
+    moy = df_map['ATXHWD'].mean()
+    st.info(f"Affichage : **{choix_rcp}** - **{choix_horizon}** | Moyenne de la zone : **{moy:.2f}**")
 
+    # Vue
     view_state = pdk.ViewState(
         latitude=df_map['Latitude'].mean(),
         longitude=df_map['Longitude'].mean(),
@@ -168,23 +177,25 @@ if not df_map.empty:
         pitch=0
     )
 
+    # Couche
     layer = pdk.Layer(
         "ScatterplotLayer",
         data=df_map,
         get_position='[Longitude, Latitude]',
         get_color='[r, g, b, 180]',
-        get_radius=4000, # Rayon 4km
+        get_radius=4000,
         pickable=True,
         auto_highlight=True
     )
 
+    # Tooltip
     tooltip = {
         "html": """
             <div style="background-color: white; color: black; padding: 5px; border: 1px solid #ccc; font-size: 12px;">
-                <b>📍 Point:</b> {Point}<br>
-                <b>🌡️ ATXHWD:</b> {ATXHWD}<br>
-                <b>📅 Période:</b> {Horizon_Filter}<br>
-                <b>📝 Scénario:</b> {Scenario}
+                <b>Point:</b> {Point}<br>
+                <b>ATXHWD:</b> {ATXHWD}<br>
+                <b>Scenario:</b> {Scenario}<br>
+                <b>Horizon:</b> {Horizon_Filter}
             </div>
         """
     }
@@ -197,4 +208,4 @@ if not df_map.empty:
     ))
 
 else:
-    st.warning("Aucune donnée pour cette combinaison.")
+    st.warning("Aucune donnée correspondante à cette sélection.")
