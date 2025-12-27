@@ -23,6 +23,7 @@
 # Format des enregistrements 
 # Point;Latitude;Longitude;Contexte;Période;ATAV;APN20MM;AFF98;ARRR;
 #-----------------------------------------------------------------------------
+Point;Latitude;Longitude;Contexte;Période;ATAV;APN20MM;AFF98;ARRR;
 139;41.3373;9.1495;RCP8.5;H1;0;0;0;0.08;
 281;41.4149;9.0628;RCP8.5;H1;0;0;0;0.08;
 282;41.4087;9.1577;RCP8.5;H1;1.36;1;0.9;0.08;
