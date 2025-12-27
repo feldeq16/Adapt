@@ -21,45 +21,55 @@ def remove_accents(input_str):
 
 def trouver_header_et_lire(chemin):
     """
-    Cherche intelligemment la ligne qui contient 'Latitude' et 'Longitude'
-    pour savoir où commence le tableau, peu importe le texte avant.
+    Tente plusieurs encodages (UTF-8 d'abord, puis Latin-1)
+    et cherche la ligne de départ des données.
     """
-    # 1. On lit les 50 premières lignes brutes pour trouver l'en-tête
-    with open(chemin, 'r', encoding='latin-1') as f:
-        lignes = [f.readline() for _ in range(50)]
+    # Liste des encodages à tester par ordre de priorité
+    encodages_a_tester = ['utf-8', 'latin-1', 'cp1252']
     
-    header_row = None
-    sep = ';' # Par défaut
-    
-    for i, ligne in enumerate(lignes):
-        # On nettoie la ligne pour comparer
-        ligne_clean = remove_accents(ligne).lower()
-        if 'latitude' in ligne_clean and 'longitude' in ligne_clean:
-            header_row = i
-            # Détection simple du séparateur
-            if ';' in ligne: sep = ';'
-            elif ',' in ligne: sep = ','
-            elif '\t' in ligne: sep = '\t'
-            break
+    for enc in encodages_a_tester:
+        try:
+            # 1. On essaie de lire les 50 premières lignes avec cet encodage
+            with open(chemin, 'r', encoding=enc) as f:
+                lignes = [f.readline() for _ in range(50)]
             
-    if header_row is None:
-        return None, "En-tête (Latitude/Longitude) non trouvé dans les 50 premières lignes."
+            # Si pas d'erreur, on cherche la ligne Latitude/Longitude
+            header_row = None
+            sep = ';' # Par défaut
+            
+            for i, ligne in enumerate(lignes):
+                ligne_clean = remove_accents(ligne).lower()
+                
+                # On cherche les mots clés vitaux
+                if 'latitude' in ligne_clean and 'longitude' in ligne_clean:
+                    header_row = i
+                    # Détection du séparateur
+                    if ';' in ligne: sep = ';'
+                    elif ',' in ligne: sep = ','
+                    elif '\t' in ligne: sep = '\t'
+                    break
+            
+            if header_row is not None:
+                # Si on a trouvé le header, on charge le tout avec cet encodage
+                df = pd.read_csv(chemin, sep=sep, header=header_row, encoding=enc, engine='python')
+                return df, None, enc # Succès !
+                
+        except UnicodeDecodeError:
+            # Si cet encodage échoue, on passe au suivant dans la boucle
+            continue
+        except Exception as e:
+            return None, str(e), enc
 
-    # 2. On lit le CSV à partir de la bonne ligne
-    try:
-        df = pd.read_csv(chemin, sep=sep, header=header_row, encoding='latin-1', engine='python')
-        return df, None
-    except Exception as e:
-        return None, str(e)
+    return None, "Impossible de lire le fichier (Encodage ou Header introuvable)", "Inconnu"
 
 # --- 2. CHARGEMENT ---
 @st.cache_data(ttl=3600, show_spinner=False)
 def charger_donnees(dossier):
     all_data = pd.DataFrame()
-    debug_infos = [] # Pour stocker les infos de diagnostic
+    debug_infos = [] 
     
     if not os.path.exists(dossier):
-        return pd.DataFrame(), [], f"Dossier '{dossier}' introuvable."
+        return pd.DataFrame(), [f"❌ Dossier '{dossier}' introuvable."], None
     
     fichiers = [f for f in os.listdir(dossier) if f.endswith('.txt')]
     
@@ -69,8 +79,8 @@ def charger_donnees(dossier):
         chemin = os.path.join(dossier, fichier)
         barre.progress((i)/len(fichiers))
         
-        # Lecture intelligente
-        df, erreur = trouver_header_et_lire(chemin)
+        # Lecture intelligente avec détection d'encodage
+        df, erreur, enc_detecte = trouver_header_et_lire(chemin)
         
         if erreur:
             debug_infos.append(f"❌ {fichier} : {erreur}")
@@ -79,22 +89,26 @@ def charger_donnees(dossier):
         # Nettoyage des colonnes (strip)
         df.columns = [c.strip() for c in df.columns]
         
-        # --- DIAGNOSTIC : On enregistre les colonnes vues ---
+        # Info debug pour vous
         cols_vues = df.columns.tolist()
         
-        # Recherche de la colonne Période
+        # Recherche de la colonne Période (Robustesse maximale)
         col_periode = None
         for col in df.columns:
-            if 'eriode' in remove_accents(col.lower()) or 'horizon' in remove_accents(col.lower()):
+            # On nettoie tout : "PÃ©riode" devient "periode" si l'encodage est bon
+            col_clean = remove_accents(col.lower())
+            if 'eriode' in col_clean or 'horizon' in col_clean:
                 col_periode = col
                 break
         
         if col_periode:
             df['Horizon_Filter'] = df[col_periode].astype(str).str.strip()
-            debug_infos.append(f"✅ {fichier} : Période trouvée dans colonne '{col_periode}'")
+            # On ajoute l'info de l'encodage dans le debug
+            debug_infos.append(f"✅ {fichier} ({enc_detecte}) : Période trouvée ('{col_periode}')")
         else:
             df['Horizon_Filter'] = "Non défini"
-            debug_infos.append(f"⚠️ {fichier} : Colonnes lues = {cols_vues}. Mot-clé 'Période' introuvable.")
+            # Affiche les 3 premières colonnes pour aider au diagnostic
+            debug_infos.append(f"⚠️ {fichier} ({enc_detecte}) : Colonne Période introuvable. Colonnes vues : {cols_vues[:5]}...")
 
         # Scénario
         nom_min = fichier.lower()
@@ -103,7 +117,7 @@ def charger_donnees(dossier):
         elif "rcp8.5" in nom_min or "rcp85" in nom_min: df['Scenario'] = "RCP 8.5"
         else: df['Scenario'] = "Autre"
 
-        # Nettoyage Données
+        # Conversion Données
         if {'Latitude', 'Longitude', 'ATXHWD'}.issubset(df.columns):
             df['Latitude'] = pd.to_numeric(df['Latitude'], errors='coerce')
             df['Longitude'] = pd.to_numeric(df['Longitude'], errors='coerce')
@@ -129,24 +143,24 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
+    # Appel du chargement
     df_total, debug_logs, erreur_globale = charger_donnees(DOSSIER_DONNEES)
     
     if erreur_globale:
         st.error(erreur_globale)
         st.stop()
 
-    # --- ZONE DE DÉBUG (C'est ça qu'il vous faut) ---
-    with st.expander("🕵️ DIAGNOSTIC (Cliquez ici)"):
-        st.write("Voici ce que le script a vu dans vos fichiers :")
+    # --- ZONE DE DÉBUG ---
+    with st.expander("🕵️ DIAGNOSTIC (Voir détails)"):
+        st.write("État de lecture des fichiers :")
         for log in debug_logs:
-            if "⚠️" in log or "❌" in log:
-                st.error(log)
-            else:
-                st.success(log)
-    # -----------------------------------------------
+            if "❌" in log: st.error(log)
+            elif "⚠️" in log: st.warning(log)
+            else: st.success(log)
+    # ---------------------
 
     if df_total.empty:
-        st.warning("Aucune donnée chargée. Regardez le diagnostic ci-dessus.")
+        st.warning("Aucune donnée chargée.")
         st.stop()
 
     # Filtres
@@ -157,12 +171,12 @@ with st.sidebar:
     horizons = sorted(df_rcp['Horizon_Filter'].unique())
     
     if not horizons or (len(horizons) == 1 and horizons[0] == "Non défini"):
-        st.warning("Périodes non détectées.")
+        st.warning("⚠️ Impossible de filtrer par Période.")
         choix_horizon = None
     else:
         choix_horizon = st.radio("Période :", horizons)
 
-    # Légende
+    # Légende Gradient
     val_min = df_total['ATXHWD'].min()
     val_max = df_total['ATXHWD'].max()
     st.divider()
@@ -180,7 +194,7 @@ with st.sidebar:
 if choix_horizon:
     df_map = df_rcp[df_rcp['Horizon_Filter'] == choix_horizon].copy()
 else:
-    df_map = pd.DataFrame() # Vide
+    df_map = pd.DataFrame()
 
 if not df_map.empty:
     norm = mcolors.Normalize(vmin=val_min, vmax=val_max)
