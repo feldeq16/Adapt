@@ -1,6 +1,7 @@
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
+from folium.plugins import MarkerCluster # <--- L'outil magique
 import pandas as pd
 import os
 
@@ -10,12 +11,10 @@ st.title("🗺️ Mon Portail Cartographique")
 
 DOSSIER_DONNEES = 'Données'
 
-# --- FONCTION DE CHARGEMENT OPTIMISÉE (CACHE) ---
-@st.cache_data # <--- C'est ici que la magie opère
+# --- FONCTION DE CHARGEMENT (CACHE) ---
+@st.cache_data
 def charger_les_donnees(dossier):
-    """Lit tous les fichiers une seule fois et les garde en mémoire"""
-    donnees_chargees = [] # Liste pour stocker (Nom du fichier, DataFrame)
-    
+    donnees_chargees = []
     if not os.path.exists(dossier):
         return []
     
@@ -24,64 +23,66 @@ def charger_les_donnees(dossier):
     for fichier in fichiers:
         chemin = os.path.join(dossier, fichier)
         try:
-            # Lecture rapide
+            # Lecture optimisée
             df = pd.read_csv(
                 chemin, 
                 sep=';', 
                 comment='#', 
-                encoding='latin-1',
-                engine='python' # Nécessaire pour le séparateur auto ou complexe
+                encoding='latin-1', 
+                engine='python'
             )
             df.columns = df.columns.str.strip()
             
-            # On ne garde que si Lat/Lon existent
             if 'Latitude' in df.columns and 'Longitude' in df.columns:
-                donnees_chargees.append((fichier, df))
+                # On allège les données : on garde juste ce qui est nécessaire pour la carte
+                cols_utiles = ['Latitude', 'Longitude'] + [c for c in df.columns if c not in ['Latitude', 'Longitude']][:5]
+                donnees_chargees.append((fichier, df[cols_utiles]))
                 
         except Exception:
-            continue # On ignore silencieusement les fichiers illisibles pour aller vite
+            continue
             
     return donnees_chargees
 
-# --- APPLICATION ---
-
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("🗂️ Données")
-    
-    # Appel de la fonction cachée (rapide comme l'éclair au 2ème clic)
-    with st.spinner('Chargement des données...'):
+    with st.spinner('Chargement...'):
         liste_donnees = charger_les_donnees(DOSSIER_DONNEES)
-    
-    st.success(f"{len(liste_donnees)} fichiers chargés en mémoire.")
+    st.success(f"{len(liste_donnees)} fichiers prêts.")
     
     st.divider()
     map_style = st.selectbox("Fond de carte", ["OpenStreetMap", "CartoDB Positron"])
 
-# --- CONSTRUCTION DE LA CARTE ---
+# --- CARTE ---
 m = folium.Map(location=[46.603354, 1.888334], zoom_start=6, tiles=map_style)
 
-# On dessine seulement si on a des données
+# --- DESSIN OPTIMISÉ (CLUSTERING) ---
 for nom_fichier, df in liste_donnees:
-    fg = folium.FeatureGroup(name=nom_fichier)
+    # Au lieu d'ajouter au map, on ajoute à un "Cluster"
+    # Cela groupe les points automatiquement
+    cluster = MarkerCluster(name=nom_fichier).add_to(m)
     
-    # Optimisation de la boucle (itertuples est 10x plus rapide que iterrows)
-    for row in df.itertuples():
-        # row.Latitude, row.Longitude, etc.
-        
-        # Astuce : On prépare le texte HTML simple
-        # (Attention : itertuples transforme les noms de colonnes avec des espaces en _)
-        infos = f"<b>Fichier:</b> {nom_fichier}<br>"
+    # On limite à 2000 points par fichier pour éviter le crash navigateur si le fichier est énorme
+    # Si vous avez une machine puissante, vous pouvez enlever .head(2000)
+    data_to_plot = df.head(2000) 
+    
+    for row in data_to_plot.itertuples():
+        # Construction du texte
+        infos = "<br>".join([f"<b>{k}:</b> {v}" for k, v in row._asdict().items() if k not in ['Index', 'Latitude', 'Longitude']])
         
         folium.CircleMarker(
             location=[row.Latitude, row.Longitude],
-            radius=4,
-            color="blue", 
+            radius=5,
+            color="blue",
             fill=True,
             fill_opacity=0.7,
             popup=folium.Popup(infos, max_width=200)
-        ).add_to(fg)
-    
-    fg.add_to(m)
+        ).add_to(cluster) # <-- On ajoute au cluster, pas à la carte directement
 
+# Ajout du contrôle des couches
 folium.LayerControl().add_to(m)
-st_folium(m, width="100%", height=700)
+
+# --- AFFICHAGE FINAL OPTIMISÉ ---
+# returned_objects=[] empêche Streamlit de recharger la page à chaque mouvement de souris
+# Cela rend la carte beaucoup plus fluide
+st_folium(m, width="100%", height=700, returned_objects=[])
