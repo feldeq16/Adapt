@@ -8,71 +8,80 @@ import os
 st.set_page_config(layout="wide", page_title="Mon Portail Cartographique")
 st.title("🗺️ Mon Portail Cartographique")
 
-# Nom du dossier où vous avez mis vos fichiers
 DOSSIER_DONNEES = 'Données'
 
-# --- SIDEBAR ---
-with st.sidebar:
-    st.header("🗂️ Données chargées")
+# --- FONCTION DE CHARGEMENT OPTIMISÉE (CACHE) ---
+@st.cache_data # <--- C'est ici que la magie opère
+def charger_les_donnees(dossier):
+    """Lit tous les fichiers une seule fois et les garde en mémoire"""
+    donnees_chargees = [] # Liste pour stocker (Nom du fichier, DataFrame)
     
-    # Vérification que le dossier existe
-    if not os.path.exists(DOSSIER_DONNEES):
-        st.error(f"Le dossier '{DOSSIER_DONNEES}' n'existe pas sur GitHub !")
-        fichiers_trouves = []
-    else:
-        # On ne prend que les fichiers .txt du dossier
-        fichiers_trouves = [f for f in os.listdir(DOSSIER_DONNEES) if f.endswith('.txt')]
-        st.success(f"{len(fichiers_trouves)} fichiers trouvés.")
+    if not os.path.exists(dossier):
+        return []
+    
+    fichiers = [f for f in os.listdir(dossier) if f.endswith('.txt')]
+    
+    for fichier in fichiers:
+        chemin = os.path.join(dossier, fichier)
+        try:
+            # Lecture rapide
+            df = pd.read_csv(
+                chemin, 
+                sep=';', 
+                comment='#', 
+                encoding='latin-1',
+                engine='python' # Nécessaire pour le séparateur auto ou complexe
+            )
+            df.columns = df.columns.str.strip()
+            
+            # On ne garde que si Lat/Lon existent
+            if 'Latitude' in df.columns and 'Longitude' in df.columns:
+                donnees_chargees.append((fichier, df))
+                
+        except Exception:
+            continue # On ignore silencieusement les fichiers illisibles pour aller vite
+            
+    return donnees_chargees
 
+# --- APPLICATION ---
+
+with st.sidebar:
+    st.header("🗂️ Données")
+    
+    # Appel de la fonction cachée (rapide comme l'éclair au 2ème clic)
+    with st.spinner('Chargement des données...'):
+        liste_donnees = charger_les_donnees(DOSSIER_DONNEES)
+    
+    st.success(f"{len(liste_donnees)} fichiers chargés en mémoire.")
+    
     st.divider()
     map_style = st.selectbox("Fond de carte", ["OpenStreetMap", "CartoDB Positron"])
 
-# --- CARTE ---
+# --- CONSTRUCTION DE LA CARTE ---
 m = folium.Map(location=[46.603354, 1.888334], zoom_start=6, tiles=map_style)
 
-# --- LECTURE ET AFFICHAGE ---
-for fichier in fichiers_trouves:
-    chemin_complet = os.path.join(DOSSIER_DONNEES, fichier)
+# On dessine seulement si on a des données
+for nom_fichier, df in liste_donnees:
+    fg = folium.FeatureGroup(name=nom_fichier)
     
-    try:
-        # L'option comment='#' dit à Pandas : "Si une ligne commence par #, ignore-la."
-        # C'est magique, ça saute tout l'en-tête automatiquement.
-        df = pd.read_csv(
-            chemin_complet, 
-            sep=';', 
-            comment='#', 
-            encoding='latin-1',
-            engine='python'
-        )
+    # Optimisation de la boucle (itertuples est 10x plus rapide que iterrows)
+    for row in df.itertuples():
+        # row.Latitude, row.Longitude, etc.
         
-        # Nettoyage des noms de colonnes (enlève les espaces autour)
-        df.columns = df.columns.str.strip()
+        # Astuce : On prépare le texte HTML simple
+        # (Attention : itertuples transforme les noms de colonnes avec des espaces en _)
+        infos = f"<b>Fichier:</b> {nom_fichier}<br>"
         
-        # Vérification basique
-        if 'Latitude' in df.columns and 'Longitude' in df.columns:
-            fg = folium.FeatureGroup(name=fichier)
-            
-            # Affichage des points
-            for idx, row in df.iterrows():
-                # Création du contenu de la bulle
-                infos = "<br>".join([f"<b>{k}:</b> {v}" for k, v in row.items() if k not in ['Latitude', 'Longitude']])
-                
-                folium.CircleMarker(
-                    location=[row['Latitude'], row['Longitude']],
-                    radius=5,
-                    color="blue", # Vous pourrez personnaliser la couleur plus tard
-                    fill=True,
-                    popup=folium.Popup(infos, max_width=300),
-                    tooltip=str(row.values[0])
-                ).add_to(fg)
-            
-            fg.add_to(m)
-        else:
-            st.sidebar.warning(f"⚠️ {fichier} ignoré (Pas de colonnes Latitude/Longitude)")
-            
-    except Exception as e:
-        st.sidebar.error(f"Erreur sur {fichier} : {e}")
+        folium.CircleMarker(
+            location=[row.Latitude, row.Longitude],
+            radius=4,
+            color="blue", 
+            fill=True,
+            fill_opacity=0.7,
+            popup=folium.Popup(infos, max_width=200)
+        ).add_to(fg)
+    
+    fg.add_to(m)
 
-# Contrôle des calques
 folium.LayerControl().add_to(m)
 st_folium(m, width="100%", height=700)
