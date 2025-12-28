@@ -12,7 +12,7 @@ from geopy.distance import geodesic
 # ============================================
 # CONFIGURATION
 # ============================================
-
+print("--- Démarrage du script ---") # REGARDEZ LE TERMINAL
 st.set_page_config(layout="wide", page_title="Climat Multi-Scénarios")
 st.title("🌍 Analyse climatique : Grille 8km")
 
@@ -23,17 +23,19 @@ DOSSIER = "Données"
 # ============================================
 
 def lire_fichier(path):
+    # Lecture optimisée : on ne lit que les colonnes utiles si possible
     return pd.read_csv(
         path,
         sep=None,
         engine="python",
         comment="#",
         skip_blank_lines=True,
-        encoding='utf-8' # Force l'encodage (ou 'latin-1' selon vos fichiers)
+        encoding='latin-1' # Souvent plus sûr pour les accents français
     )
 
 @st.cache_data
 def charger_donnees(dossier):
+    print("Début chargement données...")
     all_dfs = []
     id_cols = ["Point", "Contexte", "Période"]
     latlon_cols = ["Latitude", "Longitude"]
@@ -41,10 +43,16 @@ def charger_donnees(dossier):
     if not os.path.exists(dossier):
         return None
 
-    for f in os.listdir(dossier):
-        if not f.endswith(".txt"):
-            continue
+    fichiers = [f for f in os.listdir(dossier) if f.endswith(".txt")]
+    print(f"{len(fichiers)} fichiers trouvés.")
 
+    # LIMITATION DE SÉCURITÉ (A enlever plus tard)
+    # On ne lit que les 5 premiers fichiers pour voir si ça débloque l'affichage
+    # fichiers = fichiers[:5] 
+
+    for i, f in enumerate(fichiers):
+        if i % 10 == 0: print(f"Lecture fichier {i}/{len(fichiers)}...") # Pour voir l'avancement
+        
         try:
             df = lire_fichier(os.path.join(dossier, f))
             # Nettoyage colonnes
@@ -60,18 +68,20 @@ def charger_donnees(dossier):
             
             all_dfs.append(df)
         except Exception as e:
-            st.error(f"Erreur lecture {f}: {e}")
+            print(f"Erreur sur {f}: {e}")
             continue
 
     if not all_dfs:
         return None
 
+    print("Concaténation...")
     combined_df = pd.concat(all_dfs, ignore_index=True)
     
-    # Agrégation (first pour les coords, mean pour les valeurs si doublons)
+    print("Groupby...")
     agg_dict = {col: "first" for col in combined_df.columns if col not in id_cols}
     final_df = combined_df.groupby(id_cols, as_index=False).agg(agg_dict)
-
+    
+    print("Chargement terminé.")
     return final_df
 
 # ============================================
@@ -81,7 +91,7 @@ def charger_donnees(dossier):
 data = charger_donnees(DOSSIER)
 
 if data is None:
-    st.error("Aucune donnée chargée.")
+    st.error("Aucune donnée chargée. Vérifiez le dossier.")
     st.stop()
 
 # ============================================
@@ -91,7 +101,7 @@ if data is None:
 with st.sidebar:
     st.header("🎛️ Filtres Données")
 
-    # 1. Filtres Données
+    # Filtres
     scenario = st.selectbox("Scénario", sorted(data["Contexte"].dropna().unique()))
     df1 = data[data["Contexte"] == scenario]
 
@@ -101,25 +111,28 @@ with st.sidebar:
     meta = ["Latitude", "Longitude", "Point", "Contexte", "Période"]
     variables = [c for c in df2.columns if c not in meta and pd.api.types.is_numeric_dtype(df2[c])]
 
+    if not variables:
+        st.error("Pas de variables numériques trouvées.")
+        st.stop()
+
     var = st.selectbox("Variable", variables)
 
-    # Nettoyage final pour la carte
+    # Nettoyage
     df2 = df2.dropna(subset=["Latitude", "Longitude", var])
     
-    # Calcul des bornes pour la couleur
+    # Bornes
     vmin = df2[var].quantile(0.02)
     vmax = df2[var].quantile(0.98)
 
     st.divider()
 
-    # 2. Filtres Carte
+    # Style Carte
     st.header("🗺️ Fond de Carte")
     styles_map = {
         "Clair (Light)": "mapbox://styles/mapbox/light-v9",
         "Sombre (Dark)": "mapbox://styles/mapbox/dark-v9",
         "Satellite": "mapbox://styles/mapbox/satellite-v9",
         "Outdoors": "mapbox://styles/mapbox/outdoors-v11",
-        "Rues": "mapbox://styles/mapbox/streets-v11"
     }
     
     style_choisi = st.selectbox("Style :", list(styles_map.keys()))
@@ -136,15 +149,14 @@ with st.sidebar:
     st.pyplot(fig)
 
 # ============================================
-# GÉOCODAGE (Nominatim Gratuit)
+# GÉOCODAGE
 # ============================================
 
 @st.cache_data(show_spinner=False)
 def geocode(address):
     try:
-        # Agent unique pour éviter blocage
         agent = f"app_clim_{uuid.uuid4()}"
-        geolocator = Nominatim(user_agent=agent, timeout=5)
+        geolocator = Nominatim(user_agent=agent, timeout=2) # Timeout court pour ne pas bloquer
         location = geolocator.geocode(address)
         if location:
             return location.latitude, location.longitude
@@ -163,10 +175,10 @@ if adr:
         st.warning("Adresse introuvable.")
 
 # ============================================
-# PRÉPARATION COULEURS & CARTE
+# CARTE
 # ============================================
 
-# Calcul des couleurs RGB
+# Couleurs
 norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
 rgb = (cmap(norm(df2[var].values))[:, :3] * 255).astype(int)
 
@@ -175,21 +187,30 @@ df2["r"], df2["g"], df2["b"] = rgb[:, 0], rgb[:, 1], rgb[:, 2]
 
 layers = []
 
-# 1. CALQUE PRINCIPAL : PIXELS CARRÉS (GridCellLayer)
-# C'est ce calque qui remplace les points par des carrés de 8km
-pixel_layer = pdk.Layer(
-    "GridCellLayer",
-    data=df2,
-    get_position="[Longitude, Latitude]",
-    get_color="[r, g, b, 180]", # 180 = Transparence pour voir le fond de carte
-    cell_size=8000,             # 8000 mètres = 8km de côté
-    extruded=False,             # False = Plat (Pixel), True = 3D (Histogramme)
-    pickable=True,
-    auto_highlight=True,
-)
+# OPTIMISATION : Si plus de 10 000 points, on passe en Scatterplot (points)
+# Sinon on reste en GridCell (carrés) car c'est trop lourd pour le navigateur
+if len(df2) > 10000:
+    st.caption("⚠️ Mode 'Points' activé (trop de données pour les carrés)")
+    pixel_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=df2,
+        get_position="[Longitude, Latitude]",
+        get_color="[r, g, b, 180]",
+        get_radius=3000,
+        pickable=True
+    )
+else:
+    pixel_layer = pdk.Layer(
+        "GridCellLayer",
+        data=df2,
+        get_position="[Longitude, Latitude]",
+        get_color="[r, g, b, 180]",
+        cell_size=8000,
+        extruded=False,
+        pickable=True
+    )
 layers.append(pixel_layer)
 
-# 2. CALQUE UTILISATEUR (PIN)
 if u_lat:
     user_layer = pdk.Layer(
         "ScatterplotLayer",
@@ -210,10 +231,9 @@ else:
         zoom=5.5
     )
 
-# RENDU DE LA CARTE
 st.pydeck_chart(
     pdk.Deck(
-        map_style=map_style_url, # Fond de carte dynamique
+        map_style=map_style_url,
         layers=layers,
         initial_view_state=view_state,
         tooltip={"html": f"<b>Station:</b> {{Point}}<br><b>{var}:</b> {{{var}}}"},
@@ -221,43 +241,31 @@ st.pydeck_chart(
 )
 
 # ============================================
-# TABLEAUX & INTERPOLATION
+# TABLEAUX
 # ============================================
 
 if u_lat:
     st.divider()
-    
-    # Calcul distance
-    df2["dist_km"] = df2.apply(
-        lambda r: geodesic((u_lat, u_lon), (r["Latitude"], r["Longitude"])).km, axis=1
-    )
+    df2["dist_km"] = df2.apply(lambda r: geodesic((u_lat, u_lon), (r["Latitude"], r["Longitude"])).km, axis=1)
     voisins = df2.nsmallest(5, "dist_km")
 
     c1, c2 = st.columns(2)
 
     with c1:
-        st.subheader("📍 Point de grille le plus proche")
+        st.subheader("📍 Station la plus proche")
         plus_proche = voisins.iloc[0]
         st.info(f"Station : {plus_proche['Point']} (à {plus_proche['dist_km']:.1f} km)")
-        
-        # Petit tableau propre
         val_reelle = plus_proche[var]
         st.metric(f"Valeur réelle ({var})", f"{val_reelle:.2f}")
 
     with c2:
         st.subheader("🧮 Estimation Interpolée")
-        
-        # Interpolation IDW (Inverse Distance Weighting)
         weights = 1 / (voisins["dist_km"] + 0.01) ** 2
-        
-        # On ne calcule que pour la variable sélectionnée pour aller vite
         vals = voisins[var].values
         val_estimee = np.sum(vals * weights) / np.sum(weights)
-        
         st.success(f"Pour votre adresse exacte")
         st.metric(f"Estimation ({var})", f"{val_estimee:.2f}")
     
-    # Tableau de détail
-    st.caption("Détail des 5 points de grille utilisés pour le calcul :")
-    cols_show = ["Point", var, "dist_km", "Latitude", "Longitude"]
-    st.dataframe(voisins[cols_show].style.format({var: "{:.2f}", "dist_km": "{:.2f} km"}))
+    st.caption("Détail des points utilisés :")
+    cols_show = ["Point", var, "dist_km"]
+    st.dataframe(voisins[cols_show])
