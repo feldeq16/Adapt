@@ -10,37 +10,28 @@ from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
 # ============================================
-# 1. CONFIGURATION & STYLE
+# 1. CONFIGURATION
 # ============================================
 st.set_page_config(layout="wide", page_title="Observatoire Climatique", page_icon="🌍")
 
-# CSS pour un look "Pro"
-st.markdown("""
-<style>
-    .main > div {padding-top: 2rem;}
-    .stMetric {background-color: #f0f2f6; padding: 10px; border-radius: 5px;}
-    h1 {color: #0e1117;}
-</style>
-""", unsafe_allow_html=True)
-
+# Suppression du CSS manuel pour laisser Streamlit gérer le contraste (Fix du blanc sur blanc)
 st.title("🌍 Observatoire Climatique Multi-Scénarios")
 st.markdown("---")
 
 DOSSIER = "Données"
 
 # ============================================
-# 2. CHARGEMENT ET PRÉ-TRAITEMENT
+# 2. CHARGEMENT ET TRAITEMENT
 # ============================================
 
 def lire_fichier_safe(path):
     try:
-        # engine='python' est plus tolérant pour les séparateurs bizarres
         return pd.read_csv(path, sep=None, engine="python", comment="#", skip_blank_lines=True)
     except:
         return None
 
 @st.cache_data(show_spinner=False)
-def charger_et_calculer_echelles(dossier):
+def charger_donnees_globales(dossier):
     if not os.path.exists(dossier):
         return None, None
 
@@ -48,6 +39,7 @@ def charger_et_calculer_echelles(dossier):
     id_cols = ["Point", "Contexte", "Période"]
     latlon_cols = ["Latitude", "Longitude"]
 
+    # 1. Lecture
     for f in os.listdir(dossier):
         if not f.endswith(".txt"): continue
         
@@ -58,7 +50,7 @@ def charger_et_calculer_echelles(dossier):
         df = df.drop(columns=[c for c in df.columns if "Unnamed" in c])
         df.columns = [c.strip() for c in df.columns]
 
-        # Conversion numérique
+        # Conversion numérique forcée
         for c in df.columns:
             if c in latlon_cols:
                 df[c] = pd.to_numeric(df[c].astype(str).str.replace(",", "."), errors="coerce")
@@ -69,13 +61,13 @@ def charger_et_calculer_echelles(dossier):
 
     if not all_dfs: return None, None
 
+    # 2. Agrégation
     combined = pd.concat(all_dfs, ignore_index=True)
     agg_dict = {c: "first" for c in combined.columns if c not in id_cols}
     final_df = combined.groupby(id_cols, as_index=False).agg(agg_dict)
 
-    # Calcul des échelles globales
-    meta_cols = id_cols + latlon_cols
-    numeric_vars = [c for c in final_df.columns if c not in meta_cols and pd.api.types.is_numeric_dtype(final_df[c])]
+    # 3. Calcul des échelles globales (Min/Max par variable) pour TOUTES les données
+    numeric_vars = [c for c in final_df.columns if c not in id_cols + latlon_cols and pd.api.types.is_numeric_dtype(final_df[c])]
     
     global_scales = {}
     for v in numeric_vars:
@@ -89,11 +81,27 @@ def charger_et_calculer_echelles(dossier):
 # 3. LOGIQUE APP
 # ============================================
 
-data, echelles_globales = charger_et_calculer_echelles(DOSSIER)
+data, echelles_globales = charger_donnees_globales(DOSSIER)
 
 if data is None:
     st.error("❌ Aucune donnée trouvée. Vérifiez le dossier 'Données'.")
     st.stop()
+
+# --- TABLEAU RÉCAPITULATIF (DEMANDE SPÉCIALE) ---
+with st.expander("📊 Disponibilité des variables par Scénario", expanded=False):
+    # On groupe par Contexte (Scénario) et on compte les valeurs non nulles pour chaque variable
+    # numeric_only=True garantit qu'on ne garde que les mesures
+    dispo = data.groupby("Contexte").count()
+    
+    # On ne garde que les colonnes qui sont dans nos variables (pas Lat/Lon/Point/Période)
+    vars_cols = [c for c in dispo.columns if c in echelles_globales.keys()]
+    dispo = dispo[vars_cols].T # Transpose : Variables en Lignes, Scénarios en Colonnes
+    
+    # On remplace les nombres par des symboles
+    # Si le compte > 0, alors la donnée existe
+    dispo_clean = dispo.applymap(lambda x: "✅" if x > 0 else "❌")
+    
+    st.dataframe(dispo_clean)
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -119,18 +127,19 @@ with st.sidebar:
     
     st.divider()
     
-    # Style Carte (FIX RECTANGLES BLANCS : Utilisation de CARTO au lieu de Mapbox)
+    # Style Carte
     st.subheader("🎨 Apparence")
+    # Utilisation de CartoDB (Pas de clé API requise, pas de rectangles blancs)
     styles_map = {
-        "Clair (Carto)": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-        "Sombre (Carto)": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
-        "Voyager (Carto)": "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
+        "Clair": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+        "Sombre": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+        "Voyager": "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
     }
     style_choisi = st.selectbox("Fond de carte", list(styles_map.keys()))
     
-    # Légende Globale
+    # Légende Globale Fixe
     vmin_glob, vmax_glob = echelles_globales[choix_var]
-    st.caption(f"Échelle fixe : {choix_var}")
+    st.caption(f"Échelle fixe pour : {choix_var}")
     
     cmap = plt.get_cmap("coolwarm")
     fig, ax = plt.subplots(figsize=(4, 0.4))
@@ -145,26 +154,20 @@ with st.sidebar:
 
 df_map = df_step1[df_step1["Période"] == choix_horizon].copy()
 
-# Vérification disponibilité variable
-variable_presente = False
-if choix_var in df_map.columns:
-    if df_map[choix_var].notna().sum() > 0:
-        variable_presente = True
-        df_map = df_map.dropna(subset=["Latitude", "Longitude", choix_var])
-
-if not variable_presente:
-    st.warning(f"⚠️ La variable **{choix_var}** n'est pas disponible pour {choix_scenario} / {choix_horizon}.")
-    st.info("Disponibilité des données :")
-    pivot_check = data.groupby(['Contexte', 'Période'])[choix_var].count().unstack()
-    pivot_clean = pivot_check.applymap(lambda x: "✅" if x > 0 else "❌")
-    st.dataframe(pivot_clean) # Retrait de use_container_width pour compatibilité
+# Sécurité : Vérifier si la variable existe pour cette sélection
+if choix_var not in df_map.columns or df_map[choix_var].isna().all():
+    st.warning(f"⚠️ Donnée indisponible : La variable **{choix_var}** n'existe pas pour {choix_scenario} / {choix_horizon}.")
     st.stop()
+
+# Nettoyage des NaN pour la carte
+df_map = df_map.dropna(subset=["Latitude", "Longitude", choix_var])
 
 # --- GÉOCODAGE ---
 @st.cache_data(show_spinner=False)
 def geocode_safe(address):
     try:
-        agent = f"app_climat_pro_{uuid.uuid4()}"
+        # UUID pour éviter le blocage Nominatim
+        agent = f"app_climat_{uuid.uuid4()}"
         geolocator = Nominatim(user_agent=agent, timeout=3)
         loc = geolocator.geocode(address)
         if loc: return loc.latitude, loc.longitude
@@ -174,7 +177,7 @@ def geocode_safe(address):
 col_search, col_kpi = st.columns([2, 1])
 
 with col_search:
-    adr = st.text_input("📍 Rechercher une localisation", placeholder="Ex: Bordeaux, France")
+    adr = st.text_input("📍 Rechercher une localisation", placeholder="Ex: Toulouse, France")
     u_lat, u_lon = None, None
     if adr:
         u_lat, u_lon = geocode_safe(adr)
@@ -183,11 +186,11 @@ with col_search:
 
 with col_kpi:
     avg_val = df_map[choix_var].mean()
-    st.metric(f"Moyenne Nationale", f"{avg_val:.2f}")
+    st.metric(f"Moyenne Nationale ({choix_scenario})", f"{avg_val:.2f}")
 
-# --- RENDU CARTE ---
+# --- RENDU CARTE (PIXELS) ---
 
-# Couleurs
+# Application des couleurs selon l'échelle GLOBALE
 norm = mcolors.Normalize(vmin=vmin_glob, vmax=vmax_glob)
 rgb = (cmap(norm(df_map[choix_var].values))[:, :3] * 255).astype(int)
 df_map["r"], df_map["g"], df_map["b"] = rgb[:, 0], rgb[:, 1], rgb[:, 2]
@@ -224,22 +227,19 @@ else:
     view_state = pdk.ViewState(latitude=46.6, longitude=2.0, zoom=5.5)
 
 st.pydeck_chart(pdk.Deck(
-    map_style=styles_map[style_choisi], # Utilisation des styles Carto (pas de clé requise)
+    map_style=styles_map[style_choisi],
     initial_view_state=view_state,
     layers=layers,
     tooltip={"html": f"<b>{choix_var}:</b> {{{choix_var}}}<br><i>(Station: {{Point}})</i>"}
 ))
 
-# --- TABLEAUX ---
-
-with st.expander("📅 Voir la disponibilité des données"):
-    pivot = data.groupby(['Contexte', 'Période'])[choix_var].count().unstack().fillna(0).astype(int)
-    st.dataframe(pivot.style.background_gradient(cmap="Greens"))
+# --- ANALYSE LOCALE ---
 
 if u_lat:
     st.divider()
     st.subheader("🔍 Analyse Locale")
     
+    # 1. Calcul distances
     df_map["dist_km"] = df_map.apply(
         lambda r: geodesic((u_lat, u_lon), (r["Latitude"], r["Longitude"])).km, axis=1
     )
@@ -264,8 +264,8 @@ if u_lat:
     st.write("---")
     st.write("**Détail des données utilisées :**")
     
-    # CORRECTION DU BUG NameError ICI :
+    # CORRECTION DES VARIABLES
     cols_to_show = ["Point", choix_var, "dist_km"]
     
-    # Affichage corrigé du dataframe (sans use_container_width pour compatibilité maximale)
+    # Affichage simplifié sans paramètre de largeur obsolète
     st.dataframe(voisins[cols_to_show].style.format({choix_var: "{:.2f}", "dist_km": "{:.2f} km"}))
