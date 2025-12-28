@@ -19,38 +19,16 @@ st.markdown("---")
 
 DOSSIER = "Données"
 FICHIER_DEFINITIONS = "name.txt"
-
+FICHIER_CATEGORIES = "category.txt"
 
 # ============================================
-# 2. CHARGEMENT ET TRAITEMENT
+# 2. FONCTIONS DE LECTURE & CHARGEMENT
 # ============================================
 
-def lire_descriptions_variables(path):
-    """Lit le fichier name.txt pour extraire les descriptions"""
-    desc = {}
-    if not os.path.exists(path):
-        return desc
-    try:
-        with open(path, "r", encoding="utf-8") as f: # ou latin-1 selon votre fichier
-            for line in f:
-                if ":" in line:
-                    parts = line.split(":", 1)
-                    key = parts[0].strip()
-                    val = parts[1].strip()
-                    desc[key] = val
-    except Exception as e:
-        st.warning(f"Impossible de lire les descriptions : {e}")
-    return desc
-
-def lire_fichier_safe(path):
-    try:
-        return pd.read_csv(path, sep=None, engine="python", comment="#", skip_blank_lines=True)
-    except:
-        return None
-        
-def lire_categories(path):
-    cats = {}
-    if not os.path.exists(path): return cats
+def lire_dict_fichier(path):
+    """Lit un fichier clé:valeur (name.txt ou category.txt)"""
+    d = {}
+    if not os.path.exists(path): return d
     try:
         with open(path, "r", encoding="utf-8") as f:
             for line in f:
@@ -58,31 +36,36 @@ def lire_categories(path):
                     parts = line.split(":", 1)
                     key = parts[0].strip()
                     val = parts[1].strip()
-                    cats[key] = val
+                    d[key] = val
     except: pass
-    return cats
-    
+    return d
+
+def lire_fichier_data(path):
+    try:
+        return pd.read_csv(path, sep=None, engine="python", comment="#", skip_blank_lines=True)
+    except:
+        return None
+
 @st.cache_data(show_spinner=False)
 def charger_donnees_globales(dossier):
-    if not os.path.exists(dossier):
-        return None, None
+    if not os.path.exists(dossier): return None, None
 
     all_dfs = []
     id_cols = ["Point", "Contexte", "Période"]
     latlon_cols = ["Latitude", "Longitude"]
 
-    # 1. Lecture
+    # 1. Lecture des fichiers
     for f in os.listdir(dossier):
         if not f.endswith(".txt"): continue
         
-        df = lire_fichier_safe(os.path.join(dossier, f))
+        df = lire_fichier_data(os.path.join(dossier, f))
         if df is None: continue
 
-        # Nettoyage colonnes
+        # Nettoyage
         df = df.drop(columns=[c for c in df.columns if "Unnamed" in c])
         df.columns = [c.strip() for c in df.columns]
 
-        # Conversion numérique forcée
+        # Conversion numérique
         for c in df.columns:
             if c in latlon_cols:
                 df[c] = pd.to_numeric(df[c].astype(str).str.replace(",", "."), errors="coerce")
@@ -98,7 +81,7 @@ def charger_donnees_globales(dossier):
     agg_dict = {c: "first" for c in combined.columns if c not in id_cols}
     final_df = combined.groupby(id_cols, as_index=False).agg(agg_dict)
 
-    # 3. Calcul des échelles globales (Min/Max par variable)
+    # 3. Calcul Echelles Globales
     numeric_vars = [c for c in final_df.columns if c not in id_cols + latlon_cols and pd.api.types.is_numeric_dtype(final_df[c])]
     
     global_scales = {}
@@ -110,69 +93,58 @@ def charger_donnees_globales(dossier):
     return final_df, global_scales
 
 # ============================================
-# 3. LOGIQUE APP
+# 3. CHARGEMENT INITIAL
 # ============================================
 
-# Chargement des données et des descriptions
 data, echelles_globales = charger_donnees_globales(DOSSIER)
-descriptions = lire_descriptions_variables(FICHIER_DEFINITIONS)
+descriptions = lire_dict_fichier(FICHIER_DEFINITIONS)
+categories = lire_dict_fichier(FICHIER_CATEGORIES)
 
 if data is None:
     st.error("❌ Aucune donnée trouvée. Vérifiez le dossier 'Données'.")
     st.stop()
 
-# --- TABLEAU RÉCAPITULATIF ---
-with st.expander("📊 Disponibilité des variables par Scénario", expanded=False):
-    dispo = data.groupby("Contexte").count()
-    vars_cols = [c for c in dispo.columns if c in echelles_globales.keys()]
-    dispo = dispo[vars_cols].T
-    
-    # Ajout d'une colonne avec la description lisible
-    dispo["Définition"] = [descriptions.get(idx, "") for idx in dispo.index]
-    
-    # Réorganisation pour mettre la définition au début
-    cols = ["Définition"] + [c for c in dispo.columns if c != "Définition"]
-    dispo = dispo[cols]
+# Fonction helper pour l'affichage dans le selectbox
+def format_func_var(option):
+    desc = descriptions.get(option, "")
+    if desc:
+        return f"{option} - {desc[:50]}..."
+    return option
 
-    dispo_clean = dispo.applymap(lambda x: "✅" if x == "✅" else ("✅" if isinstance(x, int) and x > 0 else (x if isinstance(x, str) else "❌")))
-    st.dataframe(dispo_clean)
-
-# --- SIDEBAR ---
-# ... Chargement des données ...
-categories_map = lire_categories("category.txt")
-
+# ============================================
+# 4. SIDEBAR : FILTRES
+# ============================================
 with st.sidebar:
     st.header("🎛️ Paramètres")
     
-    # 1. Menu Déroulant des Catégories
-    # On récupère la liste unique des catégories
-    liste_cats = sorted(list(set(categories_map.values())))
-    # On ajoute une option pour tout voir
-    liste_cats.insert(0, "Toutes les catégories")
-    
-    choix_cat = st.selectbox("Filtrer par thème", liste_cats)
-    
-    # 2. Filtrage des variables disponibles
+    # 1. Filtre par Catégorie
+    liste_cats = sorted(list(set(categories.values())))
+    if liste_cats:
+        liste_cats.insert(0, "Toutes les catégories")
+        choix_cat = st.selectbox("Filtrer par thème", liste_cats)
+    else:
+        choix_cat = "Toutes les catégories"
+
+    # 2. Filtre Variable
     variables_dispos = sorted(list(echelles_globales.keys()))
     
+    # Application du filtre catégorie
     if choix_cat != "Toutes les catégories":
-        # On ne garde que les variables qui appartiennent à la catégorie choisie
-        variables_dispos = [v for v in variables_dispos if categories_map.get(v) == choix_cat]
+        variables_dispos = [v for v in variables_dispos if categories.get(v) == choix_cat]
 
     if not variables_dispos:
-        st.warning("Aucune variable trouvée pour cette catégorie.")
+        st.warning("Aucune variable pour cette catégorie.")
         st.stop()
-        
-    # 3. Le sélecteur de variable (maintenant filtré)
+
     choix_var = st.selectbox("Variable à analyser", variables_dispos, format_func=format_func_var)
     
-    # Affichage de la description complète sous le sélecteur
+    # Info bulle description
     if choix_var in descriptions:
-        st.info(f"**{choix_var}** : {descriptions[choix_var]}")
+        st.info(f"**Définition :** {descriptions[choix_var]}")
     
     st.divider()
     
-    # Choix Scénario & Horizon
+    # 3. Scénario & Horizon
     scenarios = sorted(data["Contexte"].unique())
     choix_scenario = st.selectbox("Scénario (RCP)", scenarios)
     
@@ -182,47 +154,25 @@ with st.sidebar:
     
     st.divider()
     
-    # Style Carte
-    st.subheader("🎨 Apparence")
+    # 4. Style
     styles_map = {
         "Clair": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
         "Sombre": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
         "Voyager": "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json"
     }
     style_choisi = st.selectbox("Fond de carte", list(styles_map.keys()))
-    
-    # Légende Globale Fixe CENTRÉE SUR LE BLANC
-    vmin_glob, vmax_glob = echelles_globales[choix_var]
-    
-    # Calcul du point milieu pour le blanc
-    vcenter = (vmin_glob + vmax_glob) / 2
-    
-    # TwoSlopeNorm permet de forcer le blanc (valeur médiane de la colormap) à une valeur précise (vcenter)
-    # Ici, coolwarm va du bleu (min) au blanc (center) au rouge (max)
-    norm_fixe = mcolors.TwoSlopeNorm(vmin=vmin_glob, vcenter=vcenter, vmax=vmax_glob)
 
-    st.caption(f"Échelle fixe : {choix_var}")
-    
-    cmap = plt.get_cmap("coolwarm")
-    fig, ax = plt.subplots(figsize=(4, 0.4))
-    
-    # On applique la norme centrée à la légende
-    cb = plt.colorbar(plt.cm.ScalarMappable(norm=norm_fixe, cmap=cmap), cax=ax, orientation='horizontal')
-    cb.outline.set_visible(False)
-    ax.set_axis_off()
-    st.pyplot(fig)
-    st.write(f"Min: **{vmin_glob:.2f}** | Moy: **{vcenter:.2f}** | Max: **{vmax_glob:.2f}**")
-
-# --- PRÉPARATION DONNÉES CARTE ---
+# ============================================
+# 5. PRÉPARATION CARTE
+# ============================================
 
 df_map = df_step1[df_step1["Période"] == choix_horizon].copy()
 
-# Sécurité : Vérifier si la variable existe pour cette sélection
+# Sécurité Variable
 if choix_var not in df_map.columns or df_map[choix_var].isna().all():
-    st.warning(f"⚠️ Donnée indisponible : La variable **{choix_var}** n'existe pas pour {choix_scenario} / {choix_horizon}.")
+    st.warning(f"⚠️ Variable **{choix_var}** indisponible pour {choix_scenario} / {choix_horizon}.")
     st.stop()
 
-# Nettoyage des NaN pour la carte
 df_map = df_map.dropna(subset=["Latitude", "Longitude", choix_var])
 
 # --- GÉOCODAGE ---
@@ -239,27 +189,29 @@ def geocode_safe(address):
 col_search, col_kpi = st.columns([2, 1])
 
 with col_search:
-    adr = st.text_input("📍 Rechercher une localisation", placeholder="Ex: Toulouse, France")
+    adr = st.text_input("📍 Rechercher une adresse", placeholder="Ex: Toulouse, France")
     u_lat, u_lon = None, None
     if adr:
         u_lat, u_lon = geocode_safe(adr)
-        if not u_lat:
-            st.warning("Adresse introuvable.")
+        if not u_lat: st.warning("Adresse introuvable.")
 
 with col_kpi:
     avg_val = df_map[choix_var].mean()
     st.metric(f"Moyenne Nationale ({choix_scenario})", f"{avg_val:.2f}")
 
-# --- RENDU CARTE (PIXELS) ---
+# --- COULEURS (Centrées sur Blanc) ---
+vmin_glob, vmax_glob = echelles_globales[choix_var]
+vcenter = (vmin_glob + vmax_glob) / 2
+norm_fixe = mcolors.TwoSlopeNorm(vmin=vmin_glob, vcenter=vcenter, vmax=vmax_glob)
+cmap = plt.get_cmap("coolwarm")
 
-# Application des couleurs selon l'échelle GLOBALE et CENTRÉE
-# On réutilise 'norm_fixe' calculé plus haut
 rgb = (cmap(norm_fixe(df_map[choix_var].values))[:, :3] * 255).astype(int)
 df_map["r"], df_map["g"], df_map["b"] = rgb[:, 0], rgb[:, 1], rgb[:, 2]
 
+# --- AFFICHAGE CARTE ---
 layers = []
 
-# Calque Pixels (8km)
+# Calque Pixels
 grid_layer = pdk.Layer(
     "GridCellLayer",
     data=df_map,
@@ -292,39 +244,64 @@ st.pydeck_chart(pdk.Deck(
     map_style=styles_map[style_choisi],
     initial_view_state=view_state,
     layers=layers,
-    tooltip={"html": f"<b>{choix_var}:</b> {{{choix_var}}}<br><i>(Station: {{Point}})</i>"}
+    tooltip={"html": f"<b>{choix_var}:</b> {{{choix_var}}}<br><i>Station: {{Point}}</i>"}
 ))
 
-# --- ANALYSE LOCALE ---
+# --- LÉGENDE (SOUS LA CARTE) ---
+col_leg1, col_leg2, col_leg3 = st.columns([1, 6, 1])
+with col_leg2:
+    st.caption(f"Échelle : {choix_var} (Min: {vmin_glob:.1f} | Blanc: {vcenter:.1f} | Max: {vmax_glob:.1f})")
+    fig, ax = plt.subplots(figsize=(10, 0.5))
+    cb = plt.colorbar(plt.cm.ScalarMappable(norm=norm_fixe, cmap=cmap), cax=ax, orientation='horizontal')
+    cb.outline.set_visible(False)
+    ax.set_axis_off()
+    st.pyplot(fig)
+
+# ============================================
+# 6. ANALYSE DÉTAILLÉE
+# ============================================
 
 if u_lat:
     st.divider()
-    st.subheader("🔍 Analyse Locale")
+    st.subheader("🔍 Analyse Complète du Pixel")
     
-    # 1. Calcul distances
+    # 1. Pixel le plus proche
     df_map["dist_km"] = df_map.apply(
         lambda r: geodesic((u_lat, u_lon), (r["Latitude"], r["Longitude"])).km, axis=1
     )
+    # On prend le pixel le plus proche (le premier)
+    pixel_cible = df_map.nsmallest(1, "dist_km").iloc[0]
     
-    voisins = df_map.nsmallest(5, "dist_km")
+    st.success(f"📍 Données pour la station la plus proche : **{pixel_cible['Point']}** (à {pixel_cible['dist_km']:.2f} km)")
     
-    col_g, col_d = st.columns(2)
+    # 2. Préparation du tableau complet des variables
+    # On récupère toutes les colonnes numériques qui sont dans echelles_globales
+    vars_to_show = [c for c in pixel_cible.index if c in echelles_globales]
     
-    with col_g:
-        st.info("📍 Pixel le plus proche")
-        proche = voisins.iloc[0]
-        st.write(f"**Identifiant :** {proche['Point']}")
-        st.write(f"**Distance :** {proche['dist_km']:.2f} km")
-        st.metric(f"Valeur brute", f"{proche[choix_var]:.2f}")
-
-    with col_d:
-        st.success("🧮 Estimation Interpolée")
-        weights = 1 / (voisins["dist_km"] + 0.01)**2
-        val_est = np.sum(voisins[choix_var] * weights) / np.sum(weights)
-        st.metric(f"Valeur pondérée", f"{val_est:.2f}")
-
-    st.write("---")
-    st.write("**Détail des données utilisées :**")
+    # Création d'un DataFrame propre pour l'affichage
+    data_list = []
+    for v in vars_to_show:
+        cat = categories.get(v, "Autre")
+        desc = descriptions.get(v, v)
+        val = pixel_cible[v]
+        data_list.append({"Catégorie": cat, "Code": v, "Description": desc, "Valeur": val})
     
-    cols_to_show = ["Point", choix_var, "dist_km"]
-    st.dataframe(voisins[cols_to_show].style.format({choix_var: "{:.2f}", "dist_km": "{:.2f} km"}))
+    df_detail = pd.DataFrame(data_list)
+    
+    # Tri par catégorie puis par code
+    df_detail = df_detail.sort_values(by=["Catégorie", "Code"])
+    
+    # 3. Affichage Interactif
+    # On permet de filtrer le tableau
+    filtre_cat_tab = st.selectbox("Filtrer le tableau par catégorie", ["Tout"] + sorted(list(set(categories.values()))), key="filtre_tab")
+    
+    if filtre_cat_tab != "Tout":
+        df_final_tab = df_detail[df_detail["Catégorie"] == filtre_cat_tab]
+    else:
+        df_final_tab = df_detail
+    
+    # Affichage du tableau stylisé
+    st.dataframe(
+        df_final_tab.style.format({"Valeur": "{:.2f}"})
+        .background_gradient(subset=["Valeur"], cmap="coolwarm")
+    )
