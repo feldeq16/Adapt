@@ -14,28 +14,56 @@ from geopy.distance import geodesic
 # ============================================
 st.set_page_config(layout="wide", page_title="Observatoire Climatique", page_icon="🌍")
 
-# Suppression du CSS manuel pour laisser Streamlit gérer le contraste (Fix du blanc sur blanc)
 st.title("🌍 Observatoire Climatique Multi-Scénarios")
 st.markdown("---")
 
 DOSSIER = "Données"
 
 # ============================================
-# 2. CHARGEMENT ET TRAITEMENT
+# 2. CHARGEMENT ET TRAITEMENT (Avec Métadonnées)
 # ============================================
 
-def lire_fichier_safe(path):
+def lire_metadonnees_et_data(path):
+    """
+    Lit un fichier pour extraire :
+    1. Les descriptions des variables (lignes commençant par #)
+    2. Le DataFrame des données
+    """
+    description_map = {}
     try:
-        return pd.read_csv(path, sep=None, engine="python", comment="#", skip_blank_lines=True)
-    except:
-        return None
+        # 1. Lecture des commentaires (Méta-données)
+        # On utilise latin-1 car c'est souvent l'encodage par défaut des fichiers Météo-France/Windows
+        # Si vos accents ne s'affichent pas bien, essayez 'utf-8'
+        with open(path, 'r', encoding='latin-1') as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("#"):
+                    # On cherche le pattern "CODE : Description"
+                    if ":" in line:
+                        parts = line.replace("#", "").split(":", 1)
+                        if len(parts) == 2:
+                            key = parts[0].strip()
+                            val = parts[1].strip()
+                            description_map[key] = val
+                else:
+                    # Dès qu'on tombe sur une ligne sans #, c'est que les données commencent
+                    break
+        
+        # 2. Lecture des données
+        df = pd.read_csv(path, sep=None, engine="python", comment="#", skip_blank_lines=True, encoding='latin-1')
+        return df, description_map
+    except Exception as e:
+        # st.warning(f"Erreur de lecture sur {path}: {e}")
+        return None, {}
 
 @st.cache_data(show_spinner=False)
 def charger_donnees_globales(dossier):
     if not os.path.exists(dossier):
-        return None, None
+        return None, None, {}
 
     all_dfs = []
+    global_descriptions = {} # Pour stocker les définitions (NORTAV : Température...)
+    
     id_cols = ["Point", "Contexte", "Période"]
     latlon_cols = ["Latitude", "Longitude"]
 
@@ -43,8 +71,11 @@ def charger_donnees_globales(dossier):
     for f in os.listdir(dossier):
         if not f.endswith(".txt"): continue
         
-        df = lire_fichier_safe(os.path.join(dossier, f))
+        df, metas = lire_metadonnees_et_data(os.path.join(dossier, f))
         if df is None: continue
+        
+        # On met à jour le dictionnaire global des descriptions
+        global_descriptions.update(metas)
 
         # Nettoyage colonnes
         df = df.drop(columns=[c for c in df.columns if "Unnamed" in c])
@@ -59,14 +90,14 @@ def charger_donnees_globales(dossier):
         
         all_dfs.append(df)
 
-    if not all_dfs: return None, None
+    if not all_dfs: return None, None, {}
 
     # 2. Agrégation
     combined = pd.concat(all_dfs, ignore_index=True)
     agg_dict = {c: "first" for c in combined.columns if c not in id_cols}
     final_df = combined.groupby(id_cols, as_index=False).agg(agg_dict)
 
-    # 3. Calcul des échelles globales (Min/Max par variable) pour TOUTES les données
+    # 3. Calcul des échelles globales (Min/Max par variable)
     numeric_vars = [c for c in final_df.columns if c not in id_cols + latlon_cols and pd.api.types.is_numeric_dtype(final_df[c])]
     
     global_scales = {}
@@ -75,31 +106,27 @@ def charger_donnees_globales(dossier):
         vmax = final_df[v].max()
         global_scales[v] = (vmin, vmax)
 
-    return final_df, global_scales
+    return final_df, global_scales, global_descriptions
 
 # ============================================
 # 3. LOGIQUE APP
 # ============================================
 
-data, echelles_globales = charger_donnees_globales(DOSSIER)
+data, echelles_globales, descriptions = charger_donnees_globales(DOSSIER)
 
 if data is None:
     st.error("❌ Aucune donnée trouvée. Vérifiez le dossier 'Données'.")
     st.stop()
 
-# --- TABLEAU RÉCAPITULATIF (DEMANDE SPÉCIALE) ---
-with st.expander("📊 Disponibilité des variables par Scénario", expanded=False):
-    # On groupe par Contexte (Scénario) et on compte les valeurs non nulles pour chaque variable
-    # numeric_only=True garantit qu'on ne garde que les mesures
+# --- TABLEAU RÉCAPITULATIF ---
+with st.expander("📊 Disponibilité des variables (Tableau de synthèse)", expanded=False):
     dispo = data.groupby("Contexte").count()
-    
-    # On ne garde que les colonnes qui sont dans nos variables (pas Lat/Lon/Point/Période)
     vars_cols = [c for c in dispo.columns if c in echelles_globales.keys()]
-    dispo = dispo[vars_cols].T # Transpose : Variables en Lignes, Scénarios en Colonnes
-    
-    # On remplace les nombres par des symboles
-    # Si le compte > 0, alors la donnée existe
+    dispo = dispo[vars_cols].T 
     dispo_clean = dispo.applymap(lambda x: "✅" if x > 0 else "❌")
+    
+    # Ajout d'une colonne description dans le tableau récap
+    dispo_clean.insert(0, "Description", [descriptions.get(idx, "") for idx in dispo_clean.index])
     
     st.dataframe(dispo_clean)
 
@@ -107,14 +134,24 @@ with st.expander("📊 Disponibilité des variables par Scénario", expanded=Fal
 with st.sidebar:
     st.header("🎛️ Paramètres")
     
-    # Choix Variable
+    # Choix Variable AVEC DESCRIPTION
     variables_dispos = sorted(list(echelles_globales.keys()))
     if not variables_dispos:
         st.error("Aucune variable numérique détectée.")
         st.stop()
-        
-    choix_var = st.selectbox("Variable à analyser", variables_dispos)
     
+    # Fonction de formatage pour afficher "CODE : Description" dans le menu
+    def format_variable(code):
+        desc = descriptions.get(code, "Description inconnue")
+        # On coupe si c'est trop long pour la sidebar
+        if len(desc) > 50: desc = desc[:47] + "..."
+        return f"{code} - {desc}"
+
+    choix_var = st.selectbox("Variable à analyser", variables_dispos, format_func=format_variable)
+    
+    # Affichage de la description complète juste en dessous pour être sûr
+    st.info(f"**Définition :** {descriptions.get(choix_var, 'Pas de description disponible')}")
+
     st.divider()
     
     # Choix Scénario & Horizon
@@ -129,7 +166,6 @@ with st.sidebar:
     
     # Style Carte
     st.subheader("🎨 Apparence")
-    # Utilisation de CartoDB (Pas de clé API requise, pas de rectangles blancs)
     styles_map = {
         "Clair": "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
         "Sombre": "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
@@ -137,36 +173,41 @@ with st.sidebar:
     }
     style_choisi = st.selectbox("Fond de carte", list(styles_map.keys()))
     
-    # Légende Globale Fixe
+    # Légende Globale Fixe & Centrée sur le Blanc
     vmin_glob, vmax_glob = echelles_globales[choix_var]
-    st.caption(f"Échelle fixe pour : {choix_var}")
+    
+    # CALCUL DU CENTRE EXACT POUR QUE LE BLANC SOIT AU MILIEU
+    milieu = (vmin_glob + vmax_glob) / 2
+    
+    # Utilisation de TwoSlopeNorm pour forcer le centre
+    # Cela garantit que la couleur blanche est exactement à 'milieu'
+    norm_legend = mcolors.TwoSlopeNorm(vmin=vmin_glob, vcenter=milieu, vmax=vmax_glob)
+    
+    st.caption(f"Échelle : {choix_var}")
     
     cmap = plt.get_cmap("coolwarm")
     fig, ax = plt.subplots(figsize=(4, 0.4))
-    norm_legend = mcolors.Normalize(vmin=vmin_glob, vmax=vmax_glob)
     cb = plt.colorbar(plt.cm.ScalarMappable(norm=norm_legend, cmap=cmap), cax=ax, orientation='horizontal')
     cb.outline.set_visible(False)
     ax.set_axis_off()
     st.pyplot(fig)
-    st.write(f"Min: **{vmin_glob:.2f}** | Max: **{vmax_glob:.2f}**")
+    st.write(f"Min: **{vmin_glob:.2f}** | Milieu (Blanc): **{milieu:.2f}** | Max: **{vmax_glob:.2f}**")
 
 # --- PRÉPARATION DONNÉES CARTE ---
 
 df_map = df_step1[df_step1["Période"] == choix_horizon].copy()
 
-# Sécurité : Vérifier si la variable existe pour cette sélection
+# Sécurité Variable
 if choix_var not in df_map.columns or df_map[choix_var].isna().all():
     st.warning(f"⚠️ Donnée indisponible : La variable **{choix_var}** n'existe pas pour {choix_scenario} / {choix_horizon}.")
     st.stop()
 
-# Nettoyage des NaN pour la carte
 df_map = df_map.dropna(subset=["Latitude", "Longitude", choix_var])
 
 # --- GÉOCODAGE ---
 @st.cache_data(show_spinner=False)
 def geocode_safe(address):
     try:
-        # UUID pour éviter le blocage Nominatim
         agent = f"app_climat_{uuid.uuid4()}"
         geolocator = Nominatim(user_agent=agent, timeout=3)
         loc = geolocator.geocode(address)
@@ -181,17 +222,17 @@ with col_search:
     u_lat, u_lon = None, None
     if adr:
         u_lat, u_lon = geocode_safe(adr)
-        if not u_lat:
-            st.warning("Adresse introuvable.")
+        if not u_lat: st.warning("Adresse introuvable.")
 
 with col_kpi:
     avg_val = df_map[choix_var].mean()
     st.metric(f"Moyenne Nationale ({choix_scenario})", f"{avg_val:.2f}")
 
-# --- RENDU CARTE (PIXELS) ---
+# --- RENDU CARTE ---
 
-# Application des couleurs selon l'échelle GLOBALE
-norm = mcolors.Normalize(vmin=vmin_glob, vmax=vmax_glob)
+# Application des couleurs avec le gradient centré
+# TwoSlopeNorm permet d'assurer que vcenter est le point blanc
+norm = mcolors.TwoSlopeNorm(vmin=vmin_glob, vcenter=milieu, vmax=vmax_glob)
 rgb = (cmap(norm(df_map[choix_var].values))[:, :3] * 255).astype(int)
 df_map["r"], df_map["g"], df_map["b"] = rgb[:, 0], rgb[:, 1], rgb[:, 2]
 
@@ -230,7 +271,7 @@ st.pydeck_chart(pdk.Deck(
     map_style=styles_map[style_choisi],
     initial_view_state=view_state,
     layers=layers,
-    tooltip={"html": f"<b>{choix_var}:</b> {{{choix_var}}}<br><i>(Station: {{Point}})</i>"}
+    tooltip={"html": f"<b>{choix_var}:</b> {{{choix_var}}}<br><i>Station: {{Point}}</i>"}
 ))
 
 # --- ANALYSE LOCALE ---
@@ -239,7 +280,6 @@ if u_lat:
     st.divider()
     st.subheader("🔍 Analyse Locale")
     
-    # 1. Calcul distances
     df_map["dist_km"] = df_map.apply(
         lambda r: geodesic((u_lat, u_lon), (r["Latitude"], r["Longitude"])).km, axis=1
     )
@@ -253,19 +293,16 @@ if u_lat:
         proche = voisins.iloc[0]
         st.write(f"**Identifiant :** {proche['Point']}")
         st.write(f"**Distance :** {proche['dist_km']:.2f} km")
-        st.metric(f"Valeur brute", f"{proche[choix_var]:.2f}")
+        st.metric(f"Valeur réelle", f"{proche[choix_var]:.2f}")
 
     with col_d:
         st.success("🧮 Estimation Interpolée")
         weights = 1 / (voisins["dist_km"] + 0.01)**2
         val_est = np.sum(voisins[choix_var] * weights) / np.sum(weights)
-        st.metric(f"Valeur pondérée", f"{val_est:.2f}")
+        st.metric(f"Valeur estimée", f"{val_est:.2f}")
 
     st.write("---")
     st.write("**Détail des données utilisées :**")
     
-    # CORRECTION DES VARIABLES
     cols_to_show = ["Point", choix_var, "dist_km"]
-    
-    # Affichage simplifié sans paramètre de largeur obsolète
     st.dataframe(voisins[cols_to_show].style.format({choix_var: "{:.2f}", "dist_km": "{:.2f} km"}))
