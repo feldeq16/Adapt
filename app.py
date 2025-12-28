@@ -10,9 +10,9 @@ from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
 # ============================================
-# CONFIGURATION
+# CONFIG
 # ============================================
-print("--- Démarrage du script ---") # REGARDEZ LE TERMINAL
+
 st.set_page_config(layout="wide", page_title="Climat Multi-Scénarios")
 st.title("🌍 Analyse climatique : Grille 8km")
 
@@ -23,43 +23,39 @@ DOSSIER = "Données"
 # ============================================
 
 def lire_fichier(path):
-    # Lecture optimisée : on ne lit que les colonnes utiles si possible
     return pd.read_csv(
         path,
         sep=None,
         engine="python",
         comment="#",
-        skip_blank_lines=True,
-        encoding='latin-1' # Souvent plus sûr pour les accents français
+        skip_blank_lines=True
     )
 
 @st.cache_data
 def charger_donnees(dossier):
-    print("Début chargement données...")
+    """
+    Agrège tous les fichiers du dossier dans une table unique.
+    Identifiant unique : Point, Contexte, Période.
+    """
+    if not os.path.exists(dossier):
+        return None
+
     all_dfs = []
     id_cols = ["Point", "Contexte", "Période"]
     latlon_cols = ["Latitude", "Longitude"]
 
-    if not os.path.exists(dossier):
-        return None
+    for f in os.listdir(dossier):
+        if not f.endswith(".txt"):
+            continue
 
-    fichiers = [f for f in os.listdir(dossier) if f.endswith(".txt")]
-    print(f"{len(fichiers)} fichiers trouvés.")
-
-    # LIMITATION DE SÉCURITÉ (A enlever plus tard)
-    # On ne lit que les 5 premiers fichiers pour voir si ça débloque l'affichage
-    # fichiers = fichiers[:5] 
-
-    for i, f in enumerate(fichiers):
-        if i % 10 == 0: print(f"Lecture fichier {i}/{len(fichiers)}...") # Pour voir l'avancement
-        
         try:
             df = lire_fichier(os.path.join(dossier, f))
-            # Nettoyage colonnes
-            df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+            # Suppression colonnes parasites
+            cols_unmatch = [c for c in df.columns if "Unnamed" in c]
+            df = df.drop(columns=cols_unmatch)
             df.columns = [c.strip() for c in df.columns]
 
-            # Conversion numérique
+            # Nettoyage et conversion numérique
             for c in df.columns:
                 if c in latlon_cols:
                     df[c] = pd.to_numeric(df[c].astype(str).str.replace(",", "."), errors="coerce")
@@ -68,41 +64,38 @@ def charger_donnees(dossier):
             
             all_dfs.append(df)
         except Exception as e:
-            print(f"Erreur sur {f}: {e}")
+            st.error(f"Erreur lecture fichier {f}: {e}")
             continue
 
     if not all_dfs:
         return None
 
-    print("Concaténation...")
+    # 1. On empile
     combined_df = pd.concat(all_dfs, ignore_index=True)
-    
-    print("Groupby...")
+
+    # 2. On agrège (Lat/Lon ne changent pas par point, on prend la moyenne des valeurs si doublons)
     agg_dict = {col: "first" for col in combined_df.columns if col not in id_cols}
     final_df = combined_df.groupby(id_cols, as_index=False).agg(agg_dict)
-    
-    print("Chargement terminé.")
+
     return final_df
 
 # ============================================
-# DONNÉES
+# CHARGEMENT DONNÉES
 # ============================================
 
 data = charger_donnees(DOSSIER)
-st.dataframe(data)
 
 if data is None:
-    st.error("Aucune donnée chargée. Vérifiez le dossier.")
+    st.error("Aucune donnée trouvée.")
     st.stop()
 
 # ============================================
-# BARRE LATÉRALE (FILTRES & STYLE)
+# FILTRES
 # ============================================
 
 with st.sidebar:
-    st.header("🎛️ Filtres Données")
+    st.header("🎛️ Filtres")
 
-    # Filtres
     scenario = st.selectbox("Scénario", sorted(data["Contexte"].dropna().unique()))
     df1 = data[data["Contexte"] == scenario]
 
@@ -110,34 +103,23 @@ with st.sidebar:
     df2 = df1[df1["Période"] == horizon]
 
     meta = ["Latitude", "Longitude", "Point", "Contexte", "Période"]
+    # On ne garde que les colonnes numériques
     variables = [c for c in df2.columns if c not in meta and pd.api.types.is_numeric_dtype(df2[c])]
 
     if not variables:
-        st.error("Pas de variables numériques trouvées.")
+        st.error("Pas de variables numériques.")
         st.stop()
 
     var = st.selectbox("Variable", variables)
 
-    # Nettoyage
+    # Nettoyage final pour la carte
     df2 = df2.dropna(subset=["Latitude", "Longitude", var])
-    
-    # Bornes
+
+    # Calcul des bornes (Quantiles pour éviter que les extrêmes écrasent les couleurs)
     vmin = df2[var].quantile(0.02)
     vmax = df2[var].quantile(0.98)
-
-    st.divider()
-
-    # Style Carte
-    st.header("🗺️ Fond de Carte")
-    styles_map = {
-        "Clair (Light)": "mapbox://styles/mapbox/light-v9",
-        "Sombre (Dark)": "mapbox://styles/mapbox/dark-v9",
-        "Satellite": "mapbox://styles/mapbox/satellite-v9",
-        "Outdoors": "mapbox://styles/mapbox/outdoors-v11",
-    }
     
-    style_choisi = st.selectbox("Style :", list(styles_map.keys()))
-    map_style_url = styles_map[style_choisi]
+    st.divider()
     
     # Légende
     st.write(f"**Légende : {var}**")
@@ -145,29 +127,31 @@ with st.sidebar:
     fig, ax = plt.subplots(figsize=(4, 0.4))
     norm_legend = mcolors.Normalize(vmin=vmin, vmax=vmax)
     cb = plt.colorbar(plt.cm.ScalarMappable(norm=norm_legend, cmap=cmap), cax=ax, orientation='horizontal')
-    cb.outline.set_visible(False)
     ax.set_axis_off()
     st.pyplot(fig)
 
 # ============================================
-# GÉOCODAGE
+# GÉOCODAGE ROBUSTE (NOMINATIM)
 # ============================================
 
 @st.cache_data(show_spinner=False)
 def geocode(address):
+    """Utilise Nominatim avec un User-Agent unique pour ne pas être bloqué"""
     try:
-        agent = f"app_clim_{uuid.uuid4()}"
-        geolocator = Nominatim(user_agent=agent, timeout=2) # Timeout court pour ne pas bloquer
+        agent = f"app_clim_pixel_{uuid.uuid4()}"
+        geolocator = Nominatim(user_agent=agent, timeout=5)
         location = geolocator.geocode(address)
         if location:
             return location.latitude, location.longitude
     except:
-        pass
+        return None, None
     return None, None
 
-adr = st.text_input("🔍 Rechercher une adresse", placeholder="Ex: Place Bellecour, Lyon")
-u_lat, u_lon = None, None
+col_s, col_b = st.columns([3, 1])
+with col_s:
+    adr = st.text_input("🔍 Adresse", placeholder="Ex: Toulouse, France")
 
+u_lat, u_lon = None, None
 if adr:
     u_lat, u_lon = geocode(adr)
     if u_lat:
@@ -176,42 +160,39 @@ if adr:
         st.warning("Adresse introuvable.")
 
 # ============================================
-# CARTE
+# PRÉPARATION COULEURS
 # ============================================
 
-# Couleurs
+cmap = plt.get_cmap("coolwarm")
 norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
+# On convertit en 0-255
 rgb = (cmap(norm(df2[var].values))[:, :3] * 255).astype(int)
 
 df2 = df2.copy()
 df2["r"], df2["g"], df2["b"] = rgb[:, 0], rgb[:, 1], rgb[:, 2]
 
+# ============================================
+# CARTE PIXELS (GRID CELL LAYER)
+# ============================================
+
+
 layers = []
 
-# OPTIMISATION : Si plus de 10 000 points, on passe en Scatterplot (points)
-# Sinon on reste en GridCell (carrés) car c'est trop lourd pour le navigateur
-if len(df2) > 10000:
-    st.caption("⚠️ Mode 'Points' activé (trop de données pour les carrés)")
-    pixel_layer = pdk.Layer(
-        "ScatterplotLayer",
-        data=df2,
-        get_position="[Longitude, Latitude]",
-        get_color="[r, g, b, 180]",
-        get_radius=3000,
-        pickable=True
-    )
-else:
-    pixel_layer = pdk.Layer(
-        "GridCellLayer",
-        data=df2,
-        get_position="[Longitude, Latitude]",
-        get_color="[r, g, b, 180]",
-        cell_size=8000,
-        extruded=False,
-        pickable=True
-    )
+# 1. Le calque de données en PIXELS
+# GridCellLayer est très performant pour dessiner des carrés
+pixel_layer = pdk.Layer(
+    "GridCellLayer",
+    data=df2,
+    get_position="[Longitude, Latitude]",
+    get_color="[r, g, b, 170]", # 170 = Transparence pour voir le fond
+    cell_size=8000,             # 8000 mètres = 8km
+    extruded=False,             # False = Plat (Pixel 2D), True = 3D. False est plus performant.
+    pickable=True,
+    auto_highlight=True,
+)
 layers.append(pixel_layer)
 
+# 2. Le calque utilisateur (Gros point vert)
 if u_lat:
     user_layer = pdk.Layer(
         "ScatterplotLayer",
@@ -224,9 +205,9 @@ if u_lat:
         line_width_min_pixels=3
     )
     layers.append(user_layer)
-    view_state = pdk.ViewState(latitude=u_lat, longitude=u_lon, zoom=9)
+    view = pdk.ViewState(latitude=u_lat, longitude=u_lon, zoom=9)
 else:
-    view_state = pdk.ViewState(
+    view = pdk.ViewState(
         latitude=df2["Latitude"].mean(), 
         longitude=df2["Longitude"].mean(), 
         zoom=5.5
@@ -234,39 +215,46 @@ else:
 
 st.pydeck_chart(
     pdk.Deck(
-        map_style=map_style_url,
+        map_style="mapbox://styles/mapbox/light-v9", # Fond clair propre
         layers=layers,
-        initial_view_state=view_state,
+        initial_view_state=view,
         tooltip={"html": f"<b>Station:</b> {{Point}}<br><b>{var}:</b> {{{var}}}"},
     )
 )
 
 # ============================================
-# TABLEAUX
+# TABLEAUX + INTERPOLATION
 # ============================================
-
 if u_lat:
     st.divider()
-    df2["dist_km"] = df2.apply(lambda r: geodesic((u_lat, u_lon), (r["Latitude"], r["Longitude"])).km, axis=1)
+    
+    # Calcul distance
+    df2["dist_km"] = df2.apply(
+        lambda r: geodesic((u_lat, u_lon), (r["Latitude"], r["Longitude"])).km, axis=1
+    )
+
     voisins = df2.nsmallest(5, "dist_km")
 
     c1, c2 = st.columns(2)
 
     with c1:
-        st.subheader("📍 Station la plus proche")
-        plus_proche = voisins.iloc[0]
-        st.info(f"Station : {plus_proche['Point']} (à {plus_proche['dist_km']:.1f} km)")
-        val_reelle = plus_proche[var]
-        st.metric(f"Valeur réelle ({var})", f"{val_reelle:.2f}")
+        st.subheader("📍 Pixel le plus proche")
+        station = voisins.iloc[0]
+        st.info(f"ID: {station['Point']} (à {station['dist_km']:.1f} km)")
+        st.metric(f"Valeur réelle ({var})", f"{station[var]:.2f}")
 
     with c2:
-        st.subheader("🧮 Estimation Interpolée")
-        weights = 1 / (voisins["dist_km"] + 0.01) ** 2
+        st.subheader("🧮 Interpolation locale")
+        # Inverse Distance Weighting
+        W = 1 / (voisins["dist_km"] + 0.01) ** 2
         vals = voisins[var].values
-        val_estimee = np.sum(vals * weights) / np.sum(weights)
-        st.success(f"Pour votre adresse exacte")
-        st.metric(f"Estimation ({var})", f"{val_estimee:.2f}")
-    
-    st.caption("Détail des points utilisés :")
+        
+        # On calcule l'estimation pondérée
+        val_est = np.sum(vals * W.values) / np.sum(W.values)
+        
+        st.success(f"Estimation pour votre adresse")
+        st.metric(f"Valeur interpolée ({var})", f"{val_est:.2f}")
+
+    st.caption("Données sources (5 pixels les plus proches) :")
     cols_show = ["Point", var, "dist_km"]
     st.dataframe(voisins[cols_show])
