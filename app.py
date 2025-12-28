@@ -89,6 +89,7 @@ def charger_donnees(dossier):
 # ============================================
 
 data = charger_donnees(DOSSIER)
+st.dataframe(data)
 
 if data is None:
     st.error("Aucune donnée chargée. Vérifiez le dossier.")
