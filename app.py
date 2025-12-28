@@ -192,21 +192,26 @@ with col_kpi:
 # --- COULEURS (Blanc = 0) ---
 vmin_glob, vmax_glob = echelles_globales[choix_var]
 
-# Pour que TwoSlopeNorm fonctionne, il faut que 0 soit entre vmin et vmax.
-# Si toutes les données sont positives (ex: 10 à 30), TwoSlopeNorm plante si vcenter=0.
-# On ajuste donc vmin/vmax pour inclure 0 si nécessaire.
-a = 0
-if vmin_glob > 0: 
-    vmin_glob = 0 
-    a = 1
-if vmax_glob < 0: 
-    vmax_glob = 0 
-    a = 1
-if a == 0 : norm_fixe = mcolors.TwoSlopeNorm(vmin=vmin_glob, vcenter=0, vmax=vmax_glob)
-else : norm_fixe = mcolors.TwoSlopeNorm(vmin=vmin_glob, vmax=vmax_glob)
+# CORRECTION DU BUG : On force l'échelle à inclure 0 pour que TwoSlopeNorm fonctionne
+# Si toutes les données sont positives (ex: 10 à 30), on force le min à un tout petit nombre négatif
+if vmin_glob >= 0: 
+    vmin_glob = -0.00001 # Juste un epsilon pour que 0 soit inclus
+    # Optionnel : Si vous préférez une échelle symétrique (ex: -30 à +30), mettez : vmin_glob = -vmax_glob
 
+# Si toutes les données sont négatives (ex: -10 à -2), on force le max à un tout petit nombre positif
+if vmax_glob <= 0: 
+    vmax_glob = 0.00001 
+    # Optionnel : Si vous préférez une échelle symétrique, mettez : vmax_glob = -vmin_glob
+
+# Sécurité si tout vaut exactement 0
+if vmin_glob == 0 and vmax_glob == 0:
+    vmin_glob, vmax_glob = -1, 1
+
+# Maintenant on est sûr que vmin < 0 < vmax
+norm_fixe = mcolors.TwoSlopeNorm(vmin=vmin_glob, vcenter=0, vmax=vmax_glob)
 cmap = plt.get_cmap("coolwarm")
 
+# Application des couleurs
 rgb = (cmap(norm_fixe(df_map[choix_var].values))[:, :3] * 255).astype(int)
 df_map["r"], df_map["g"], df_map["b"] = rgb[:, 0], rgb[:, 1], rgb[:, 2]
 
@@ -250,24 +255,21 @@ st.pydeck_chart(pdk.Deck(
 # --- LÉGENDE ---
 col_leg1, col_leg2, col_leg3 = st.columns([1, 6, 1])
 with col_leg2:
-    desc_complete = descriptions.get(choix_var, choix_var)
-    unite = extraire_unite(desc_complete)
-    titre_legende = f"{desc_complete}  —  Unité : **{unite}**" if unite else desc_complete
-    
-    st.markdown(f"<h5 style='text-align: center;'>{titre_legende}</h5>", unsafe_allow_html=True)
+    # ... (code titre légende) ...
     
     fig, ax = plt.subplots(figsize=(10, 0.4))
+    # On utilise bien norm_fixe qui contient les bornes corrigées
     cb = plt.colorbar(plt.cm.ScalarMappable(norm=norm_fixe, cmap=cmap), cax=ax, orientation='horizontal')
     cb.outline.set_visible(False)
     ax.set_axis_off()
     st.pyplot(fig)
     
-    # Indicateurs sous la barre
     c1, c2, c3 = st.columns(3)
-    c1.markdown(f"<div style='text-align: left'><b>{vmin_glob:.1f}</b> (Min)</div>", unsafe_allow_html=True)
-    c2.markdown(f"<div style='text-align: center'><b>0</b> (Neutre)</div>", unsafe_allow_html=True)
-    c3.markdown(f"<div style='text-align: right'><b>{vmax_glob:.1f}</b> (Max)</div>", unsafe_allow_html=True)
-
+    # Affichage propre des bornes
+    c1.markdown(f"<div style='text-align: left'><b>{vmin_glob:.1f}</b></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div style='text-align: center'><b>0</b></div>", unsafe_allow_html=True)
+    c3.markdown(f"<div style='text-align: right'><b>{vmax_glob:.1f}</b></div>", unsafe_allow_html=True)
+    
 # ============================================
 # 6. ANALYSE DÉTAILLÉE
 # ============================================
