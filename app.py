@@ -9,6 +9,17 @@ import uuid
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 
+# ============================================
+# 1. CONFIGURATION
+# ============================================
+st.set_page_config(layout="wide", page_title="Observatoire Climatique", page_icon="🌍")
+
+st.title("🌍 Observatoire Climatique Multi-Scénarios")
+st.markdown("---")
+
+DOSSIER = "Donnéest"
+FICHIER_DEFINITIONS = "name.txt"
+
 # ... après les imports ...
 
 st.write("--- DIAGNOSTIC ---")
@@ -31,16 +42,6 @@ st.write("------------------")
 
 # ... suite du code ...
 
-# ============================================
-# 1. CONFIGURATION
-# ============================================
-st.set_page_config(layout="wide", page_title="Observatoire Climatique", page_icon="🌍")
-
-st.title("🌍 Observatoire Climatique Multi-Scénarios")
-st.markdown("---")
-
-DOSSIER = "Donnéest"
-FICHIER_DEFINITIONS = "name.txt"
 
 # ============================================
 # 2. CHARGEMENT ET TRAITEMENT
