@@ -47,7 +47,21 @@ def lire_fichier_safe(path):
         return pd.read_csv(path, sep=None, engine="python", comment="#", skip_blank_lines=True)
     except:
         return None
-
+        
+def lire_categories(path):
+    cats = {}
+    if not os.path.exists(path): return cats
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                if ":" in line:
+                    parts = line.split(":", 1)
+                    key = parts[0].strip()
+                    val = parts[1].strip()
+                    cats[key] = val
+    except: pass
+    return cats
+    
 @st.cache_data(show_spinner=False)
 def charger_donnees_globales(dossier):
     if not os.path.exists(dossier):
@@ -124,23 +138,32 @@ with st.expander("📊 Disponibilité des variables par Scénario", expanded=Fal
     st.dataframe(dispo_clean)
 
 # --- SIDEBAR ---
+# ... Chargement des données ...
+categories_map = lire_categories("category.txt")
+
 with st.sidebar:
     st.header("🎛️ Paramètres")
     
-    # Choix Variable AVEC DESCRIPTION
-    variables_dispos = sorted(list(echelles_globales.keys()))
-    if not variables_dispos:
-        st.error("Aucune variable numérique détectée.")
-        st.stop()
+    # 1. Menu Déroulant des Catégories
+    # On récupère la liste unique des catégories
+    liste_cats = sorted(list(set(categories_map.values())))
+    # On ajoute une option pour tout voir
+    liste_cats.insert(0, "Toutes les catégories")
     
-    # Fonction pour afficher le nom propre dans le menu
-    def format_func_var(option):
-        desc = descriptions.get(option, "")
-        if desc:
-            # On tronque si c'est trop long pour la sidebar
-            return f"{option} - {desc[:40]}..."
-        return option
+    choix_cat = st.selectbox("Filtrer par thème", liste_cats)
+    
+    # 2. Filtrage des variables disponibles
+    variables_dispos = sorted(list(echelles_globales.keys()))
+    
+    if choix_cat != "Toutes les catégories":
+        # On ne garde que les variables qui appartiennent à la catégorie choisie
+        variables_dispos = [v for v in variables_dispos if categories_map.get(v) == choix_cat]
 
+    if not variables_dispos:
+        st.warning("Aucune variable trouvée pour cette catégorie.")
+        st.stop()
+        
+    # 3. Le sélecteur de variable (maintenant filtré)
     choix_var = st.selectbox("Variable à analyser", variables_dispos, format_func=format_func_var)
     
     # Affichage de la description complète sous le sélecteur
