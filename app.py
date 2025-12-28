@@ -17,7 +17,7 @@ st.set_page_config(layout="wide", page_title="Observatoire Climatique", page_ico
 st.title("🌍 Observatoire Climatique Multi-Scénarios")
 st.markdown("---")
 
-DOSSIER = "Données"
+DOSSIER = "Donnéest"
 FICHIER_DEFINITIONS = "name.txt"
 
 # ============================================
