@@ -1,1 +1,79 @@
-
+NORTAV : 🌡️ Températures & Moyennes
+NORTNAV : 🌡️ Températures & Moyennes
+NORTXAV : 🌡️ Températures & Moyennes
+NORTRAV : 🌡️ Températures & Moyennes
+NORTXQ90 : 🌡️ Températures & Moyennes
+NORTXQ10 : 🌡️ Températures & Moyennes
+NORTNQ10 : 🌡️ Températures & Moyennes
+NORTNQ90 : 🌡️ Températures & Moyennes
+ATAV : 🌡️ Températures & Moyennes
+ATNAV : 🌡️ Températures & Moyennes
+ATXAV : 🌡️ Températures & Moyennes
+ATRAV : 🌡️ Températures & Moyennes
+ATXQ90 : 🌡️ Températures & Moyennes
+ATXQ10 : 🌡️ Températures & Moyennes
+ATNQ10 : 🌡️ Températures & Moyennes
+ATNQ90 : 🌡️ Températures & Moyennes
+NORSD : 🔥 Chaleur & Canicules
+NORTX35 : 🔥 Chaleur & Canicules
+NORTXND : 🔥 Chaleur & Canicules
+NORTNHT : 🔥 Chaleur & Canicules
+NORTR : 🔥 Chaleur & Canicules
+NORTXHWD : 🔥 Chaleur & Canicules
+NORCDD : 🔥 Chaleur & Canicules
+ASD : 🔥 Chaleur & Canicules
+ATX35 : 🔥 Chaleur & Canicules
+ATXND : 🔥 Chaleur & Canicules
+ATNHT : 🔥 Chaleur & Canicules
+ATR : 🔥 Chaleur & Canicules
+ATXHWD : 🔥 Chaleur & Canicules
+ACDD : 🔥 Chaleur & Canicules
+NORTNFD : ❄️ Froid & Gel
+NORTNND : ❄️ Froid & Gel
+NORTXFD : ❄️ Froid & Gel
+NORTNCWD : ❄️ Froid & Gel
+NORHDD : ❄️ Froid & Gel
+ATNFD : ❄️ Froid & Gel
+ATNND : ❄️ Froid & Gel
+ATXFD : ❄️ Froid & Gel
+ATNCWD : ❄️ Froid & Gel
+AHDD : ❄️ Froid & Gel
+NORPAV : 💧 Pluie, Sécheresse & Humidité
+NORRR : 💧 Pluie, Sécheresse & Humidité
+NORRR1MM : 💧 Pluie, Sécheresse & Humidité
+NORPN20MM : 💧 Pluie, Sécheresse & Humidité
+NORPFL90 : 💧 Pluie, Sécheresse & Humidité
+NORPXCWD : 💧 Pluie, Sécheresse & Humidité
+NORPXCDD : 💧 Pluie, Sécheresse & Humidité
+NORTPSPI : 💧 Pluie, Sécheresse & Humidité
+NORPINT : 💧 Pluie, Sécheresse & Humidité
+NORPQ90 : 💧 Pluie, Sécheresse & Humidité
+NORPQ99 : 💧 Pluie, Sécheresse & Humidité
+NORRR99 : 💧 Pluie, Sécheresse & Humidité
+NORHUSAV : 💧 Pluie, Sécheresse & Humidité
+NORETPC : 💧 Pluie, Sécheresse & Humidité
+APAV : 💧 Pluie, Sécheresse & Humidité
+ARR : 💧 Pluie, Sécheresse & Humidité
+ARR1MM : 💧 Pluie, Sécheresse & Humidité
+APN20MM : 💧 Pluie, Sécheresse & Humidité
+APFL90 : 💧 Pluie, Sécheresse & Humidité
+APXCWD : 💧 Pluie, Sécheresse & Humidité
+APXCDD : 💧 Pluie, Sécheresse & Humidité
+APINT : 💧 Pluie, Sécheresse & Humidité
+APQ90 : 💧 Pluie, Sécheresse & Humidité
+APQ99 : 💧 Pluie, Sécheresse & Humidité
+RR99 : 💧 Pluie, Sécheresse & Humidité
+AHUSAV : 💧 Pluie, Sécheresse & Humidité
+AETPC : 💧 Pluie, Sécheresse & Humidité
+ARPAV : 💧 Pluie, Sécheresse & Humidité
+ARRR : 💧 Pluie, Sécheresse & Humidité
+ARPINT : 💧 Pluie, Sécheresse & Humidité
+ARPQ90 : 💧 Pluie, Sécheresse & Humidité
+ARPQ99 : 💧 Pluie, Sécheresse & Humidité
+ARETPC : 💧 Pluie, Sécheresse & Humidité
+NORFFQ98 : 🌬️ Vent
+NORFF98 : 🌬️ Vent
+AFFAV : 🌬️ Vent
+AFF3 : 🌬️ Vent
+AFFQ98 : 🌬️ Vent
+AFF98 : 🌬️ Vent
