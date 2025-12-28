@@ -195,10 +195,16 @@ vmin_glob, vmax_glob = echelles_globales[choix_var]
 # Pour que TwoSlopeNorm fonctionne, il faut que 0 soit entre vmin et vmax.
 # Si toutes les données sont positives (ex: 10 à 30), TwoSlopeNorm plante si vcenter=0.
 # On ajuste donc vmin/vmax pour inclure 0 si nécessaire.
-if vmin_glob > 0: vmin_glob = 0 # On force le bleu symétrique
-if vmax_glob < 0: vmax_glob = 0 # On force le rouge symétrique
+a = 0
+if vmin_glob > 0: 
+    vmin_glob = 0 
+    a = 1
+if vmax_glob < 0: 
+    vmax_glob = 0 
+    a = 1
+if a == 0 : norm_fixe = mcolors.TwoSlopeNorm(vmin=vmin_glob, vcenter=0, vmax=vmax_glob)
+else : norm_fixe = mcolors.TwoSlopeNorm(vmin=vmin_glob, vmax=vmax_glob)
 
-norm_fixe = mcolors.TwoSlopeNorm(vmin=vmin_glob, vcenter=0, vmax=vmax_glob)
 cmap = plt.get_cmap("coolwarm")
 
 rgb = (cmap(norm_fixe(df_map[choix_var].values))[:, :3] * 255).astype(int)
