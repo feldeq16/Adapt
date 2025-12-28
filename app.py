@@ -17,30 +17,8 @@ st.set_page_config(layout="wide", page_title="Observatoire Climatique", page_ico
 st.title("🌍 Observatoire Climatique Multi-Scénarios")
 st.markdown("---")
 
-DOSSIER = "Donnéest"
+DOSSIER = "Données"
 FICHIER_DEFINITIONS = "name.txt"
-
-# ... après les imports ...
-
-st.write("--- DIAGNOSTIC ---")
-st.write(f"Dossier de travail actuel : `{os.getcwd()}`")
-
-if os.path.exists(DOSSIER):
-    st.success(f"✅ Le dossier '{DOSSIER}' existe.")
-    fichiers = os.listdir(DOSSIER)
-    st.write(f"Contenu du dossier : {fichiers}")
-    
-    txt_files = [f for f in fichiers if f.endswith(".txt")]
-    if len(txt_files) == 0:
-        st.error("⚠️ Le dossier existe mais ne contient aucun fichier .txt !")
-    else:
-        st.success(f"✅ {len(txt_files)} fichiers .txt trouvés.")
-else:
-    st.error(f"❌ Le dossier '{DOSSIER}' est INTROUVABLE au chemin indiqué.")
-    
-st.write("------------------")
-
-# ... suite du code ...
 
 
 # ============================================
