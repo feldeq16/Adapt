@@ -1,79 +1,79 @@
-NORTAV : 🌡️ Températures & Moyennes
-NORTNAV : 🌡️ Températures & Moyennes
-NORTXAV : 🌡️ Températures & Moyennes
-NORTRAV : 🌡️ Températures & Moyennes
-NORTXQ90 : 🌡️ Températures & Moyennes
-NORTXQ10 : 🌡️ Températures & Moyennes
-NORTNQ10 : 🌡️ Températures & Moyennes
-NORTNQ90 : 🌡️ Températures & Moyennes
-ATAV : 🌡️ Températures & Moyennes
-ATNAV : 🌡️ Températures & Moyennes
-ATXAV : 🌡️ Températures & Moyennes
-ATRAV : 🌡️ Températures & Moyennes
-ATXQ90 : 🌡️ Températures & Moyennes
-ATXQ10 : 🌡️ Températures & Moyennes
-ATNQ10 : 🌡️ Températures & Moyennes
-ATNQ90 : 🌡️ Températures & Moyennes
-NORSD : 🔥 Chaleur & Canicules
-NORTX35 : 🔥 Chaleur & Canicules
-NORTXND : 🔥 Chaleur & Canicules
-NORTNHT : 🔥 Chaleur & Canicules
-NORTR : 🔥 Chaleur & Canicules
-NORTXHWD : 🔥 Chaleur & Canicules
-NORCDD : 🔥 Chaleur & Canicules
-ASD : 🔥 Chaleur & Canicules
-ATX35 : 🔥 Chaleur & Canicules
-ATXND : 🔥 Chaleur & Canicules
-ATNHT : 🔥 Chaleur & Canicules
-ATR : 🔥 Chaleur & Canicules
-ATXHWD : 🔥 Chaleur & Canicules
-ACDD : 🔥 Chaleur & Canicules
-NORTNFD : ❄️ Froid & Gel
-NORTNND : ❄️ Froid & Gel
-NORTXFD : ❄️ Froid & Gel
-NORTNCWD : ❄️ Froid & Gel
-NORHDD : ❄️ Froid & Gel
-ATNFD : ❄️ Froid & Gel
-ATNND : ❄️ Froid & Gel
-ATXFD : ❄️ Froid & Gel
-ATNCWD : ❄️ Froid & Gel
-AHDD : ❄️ Froid & Gel
-NORPAV : 💧 Pluie, Sécheresse & Humidité
-NORRR : 💧 Pluie, Sécheresse & Humidité
-NORRR1MM : 💧 Pluie, Sécheresse & Humidité
-NORPN20MM : 💧 Pluie, Sécheresse & Humidité
-NORPFL90 : 💧 Pluie, Sécheresse & Humidité
-NORPXCWD : 💧 Pluie, Sécheresse & Humidité
-NORPXCDD : 💧 Pluie, Sécheresse & Humidité
-NORTPSPI : 💧 Pluie, Sécheresse & Humidité
-NORPINT : 💧 Pluie, Sécheresse & Humidité
-NORPQ90 : 💧 Pluie, Sécheresse & Humidité
-NORPQ99 : 💧 Pluie, Sécheresse & Humidité
-NORRR99 : 💧 Pluie, Sécheresse & Humidité
-NORHUSAV : 💧 Pluie, Sécheresse & Humidité
-NORETPC : 💧 Pluie, Sécheresse & Humidité
-APAV : 💧 Pluie, Sécheresse & Humidité
-ARR : 💧 Pluie, Sécheresse & Humidité
-ARR1MM : 💧 Pluie, Sécheresse & Humidité
-APN20MM : 💧 Pluie, Sécheresse & Humidité
-APFL90 : 💧 Pluie, Sécheresse & Humidité
-APXCWD : 💧 Pluie, Sécheresse & Humidité
-APXCDD : 💧 Pluie, Sécheresse & Humidité
-APINT : 💧 Pluie, Sécheresse & Humidité
-APQ90 : 💧 Pluie, Sécheresse & Humidité
-APQ99 : 💧 Pluie, Sécheresse & Humidité
-RR99 : 💧 Pluie, Sécheresse & Humidité
-AHUSAV : 💧 Pluie, Sécheresse & Humidité
-AETPC : 💧 Pluie, Sécheresse & Humidité
-ARPAV : 💧 Pluie, Sécheresse & Humidité
-ARRR : 💧 Pluie, Sécheresse & Humidité
-ARPINT : 💧 Pluie, Sécheresse & Humidité
-ARPQ90 : 💧 Pluie, Sécheresse & Humidité
-ARPQ99 : 💧 Pluie, Sécheresse & Humidité
-ARETPC : 💧 Pluie, Sécheresse & Humidité
+NORTAV : 🌡️ Températures
+NORTNAV : 🌡️ Températures
+NORTXAV : 🌡️ Températures
+NORTRAV : 🌡️ Températures
+NORTXQ90 : 🌡️ Températures
+NORTXQ10 : 🌡️ Températures
+NORTNQ90 : 🌡️ Températures
+NORTNQ10 : 🌡️ Températures
+NORHDD : 🌡️ Températures
+NORCDD : 🌡️ Températures
+ATAV : 📈 Ecarts de Températures
+ATNAV : 📈 Ecarts de Températures
+ATXAV : 📈 Ecarts de Températures
+ATRAV : 📈 Ecarts de Températures
+ATXQ90 : 📈 Ecarts de Températures
+ATXQ10 : 📈 Ecarts de Températures
+ATNQ90 : 📈 Ecarts de Températures
+ATNQ10 : 📈 Ecarts de Températures
+AHDD : 📈 Ecarts de Températures
+ACDD : 📈 Ecarts de Températures
+NORSD : 📅 Nombre de jours de Températures
+NORTX35 : 📅 Nombre de jours de Températures
+NORTXHWD : 📅 Nombre de jours de Températures
+NORTXND : 📅 Nombre de jours de Températures
+NORTNHT : 📅 Nombre de jours de Températures
+NORTR : 📅 Nombre de jours de Températures
+NORTNFD : 📅 Nombre de jours de Températures
+NORTXFD : 📅 Nombre de jours de Températures
+NORTNND : 📅 Nombre de jours de Températures
+NORTNCWD : 📅 Nombre de jours de Températures
+ASD : 📉 Ecarts du nombre de jours de Températures
+ATX35 : 📉 Ecarts du nombre de jours de Températures
+ATXHWD : 📉 Ecarts du nombre de jours de Températures
+ATXND : 📉 Ecarts du nombre de jours de Températures
+ATNHT : 📉 Ecarts du nombre de jours de Températures
+ATR : 📉 Ecarts du nombre de jours de Températures
+ATNFD : 📉 Ecarts du nombre de jours de Températures
+ATXFD : 📉 Ecarts du nombre de jours de Températures
+ATNND : 📉 Ecarts du nombre de jours de Températures
+ATNCWD : 📉 Ecarts du nombre de jours de Températures
+NORPAV : 💧 Précipitations
+NORPQ90 : 💧 Précipitations
+NORPQ99 : 💧 Précipitations
+NORRR : 💧 Précipitations
+NORPINT : 💧 Précipitations
+NORPFL90 : 💧 Précipitations
+NORTPSPI : 💧 Précipitations
+APAV : 🌧️ Ecarts de Précipitations
+APQ90 : 🌧️ Ecarts de Précipitations
+APQ99 : 🌧️ Ecarts de Précipitations
+ARR : 🌧️ Ecarts de Précipitations
+APINT : 🌧️ Ecarts de Précipitations
+APFL90 : 🌧️ Ecarts de Précipitations
+ARPAV : 🌧️ Ecarts de Précipitations
+ARPINT : 🌧️ Ecarts de Précipitations
+ARRR : 🌧️ Ecarts de Précipitations
+ARPQ90 : 🌧️ Ecarts de Précipitations
+ARPQ99 : 🌧️ Ecarts de Précipitations
+NORRR1MM : ☔ Nombre de jours de Précipitations
+NORPN20MM : ☔ Nombre de jours de Précipitations
+NORRR99 : ☔ Nombre de jours de Précipitations
+NORPXCWD : ☔ Nombre de jours de Précipitations
+NORPXCDD : ☔ Nombre de jours de Précipitations
+ARR1MM : 🌫️ Ecarts du nombre de jours de Précipitations
+APN20MM : 🌫️ Ecarts du nombre de jours de Précipitations
+ARR99 : 🌫️ Ecarts du nombre de jours de Précipitations
+APXCWD : 🌫️ Ecarts du nombre de jours de Précipitations
+APXCDD : 🌫️ Ecarts du nombre de jours de Précipitations
+NORHUSAV : 💧 Humidité
+AHUSAV : 📉 Ecarts d'Humidité
 NORFFQ98 : 🌬️ Vent
-NORFF98 : 🌬️ Vent
-AFFAV : 🌬️ Vent
-AFF3 : 🌬️ Vent
-AFFQ98 : 🌬️ Vent
-AFF98 : 🌬️ Vent
+AFFQ98 : 🍃 Ecarts de Vent
+AFFAV : 🍃 Ecarts de Vent
+NORFF98 : 🚩 Nombre de jours de Vent
+AFF98 : 📉 Ecarts du nombre de jours de Vent
+AFF3 : 📉 Ecarts du nombre de jours de Vent
+NORETPC : ☀️ Evapo-Transpiration Potentielle
+AETPC : 📉 Ecarts Evapo-Transpiration Potentielle
+ARETPC : 📉 Ecarts Evapo-Transpiration Potentielle
