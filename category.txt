@@ -1,79 +1,89 @@
-NORTAV : 🌡️ Températures
-NORTNAV : 🌡️ Températures
-NORTXAV : 🌡️ Températures
-NORTRAV : 🌡️ Températures
-NORTXQ90 : 🌡️ Températures
-NORTXQ10 : 🌡️ Températures
-NORTNQ90 : 🌡️ Températures
-NORTNQ10 : 🌡️ Températures
-NORHDD : 🌡️ Températures
-NORCDD : 🌡️ Températures
-ATAV : 📈 Ecarts de Températures
-ATNAV : 📈 Ecarts de Températures
-ATXAV : 📈 Ecarts de Températures
-ATRAV : 📈 Ecarts de Températures
-ATXQ90 : 📈 Ecarts de Températures
-ATXQ10 : 📈 Ecarts de Températures
-ATNQ90 : 📈 Ecarts de Températures
-ATNQ10 : 📈 Ecarts de Températures
-AHDD : 📈 Ecarts de Températures
-ACDD : 📈 Ecarts de Températures
-NORSD : 📅 Nombre de jours de Températures
-NORTX35 : 📅 Nombre de jours de Températures
-NORTXHWD : 📅 Nombre de jours de Températures
-NORTXND : 📅 Nombre de jours de Températures
-NORTNHT : 📅 Nombre de jours de Températures
-NORTR : 📅 Nombre de jours de Températures
-NORTNFD : 📅 Nombre de jours de Températures
-NORTXFD : 📅 Nombre de jours de Températures
-NORTNND : 📅 Nombre de jours de Températures
-NORTNCWD : 📅 Nombre de jours de Températures
-ASD : 📉 Ecarts du nombre de jours de Températures
-ATX35 : 📉 Ecarts du nombre de jours de Températures
-ATXHWD : 📉 Ecarts du nombre de jours de Températures
-ATXND : 📉 Ecarts du nombre de jours de Températures
-ATNHT : 📉 Ecarts du nombre de jours de Températures
-ATR : 📉 Ecarts du nombre de jours de Températures
-ATNFD : 📉 Ecarts du nombre de jours de Températures
-ATXFD : 📉 Ecarts du nombre de jours de Températures
-ATNND : 📉 Ecarts du nombre de jours de Températures
-ATNCWD : 📉 Ecarts du nombre de jours de Températures
-NORPAV : 💧 Précipitations
-NORPQ90 : 💧 Précipitations
-NORPQ99 : 💧 Précipitations
-NORRR : 💧 Précipitations
-NORPINT : 💧 Précipitations
-NORPFL90 : 💧 Précipitations
-NORTPSPI : 💧 Précipitations
-APAV : 🌧️ Ecarts de Précipitations
-APQ90 : 🌧️ Ecarts de Précipitations
-APQ99 : 🌧️ Ecarts de Précipitations
-ARR : 🌧️ Ecarts de Précipitations
-APINT : 🌧️ Ecarts de Précipitations
-APFL90 : 🌧️ Ecarts de Précipitations
-ARPAV : 🌧️ Ecarts de Précipitations
-ARPINT : 🌧️ Ecarts de Précipitations
-ARRR : 🌧️ Ecarts de Précipitations
-ARPQ90 : 🌧️ Ecarts de Précipitations
-ARPQ99 : 🌧️ Ecarts de Précipitations
-NORRR1MM : ☔ Nombre de jours de Précipitations
-NORPN20MM : ☔ Nombre de jours de Précipitations
-NORRR99 : ☔ Nombre de jours de Précipitations
-NORPXCWD : ☔ Nombre de jours de Précipitations
-NORPXCDD : ☔ Nombre de jours de Précipitations
-ARR1MM : 🌫️ Ecarts du nombre de jours de Précipitations
-APN20MM : 🌫️ Ecarts du nombre de jours de Précipitations
-ARR99 : 🌫️ Ecarts du nombre de jours de Précipitations
-APXCWD : 🌫️ Ecarts du nombre de jours de Précipitations
-APXCDD : 🌫️ Ecarts du nombre de jours de Précipitations
-NORHUSAV : 💧 Humidité
-AHUSAV : 📉 Ecarts d'Humidité
-NORFFQ98 : 🌬️ Vent
-AFFQ98 : 🍃 Ecarts de Vent
-AFFAV : 🍃 Ecarts de Vent
-NORFF98 : 🚩 Nombre de jours de Vent
-AFF98 : 📉 Ecarts du nombre de jours de Vent
-AFF3 : 📉 Ecarts du nombre de jours de Vent
-NORETPC : ☀️ Evapo-Transpiration Potentielle
-AETPC : 📉 Ecarts Evapo-Transpiration Potentielle
-ARETPC : 📉 Ecarts Evapo-Transpiration Potentielle
+NORTAV : 🌡️ Températures | Valeurs
+NORTNAV : 🌡️ Températures | Valeurs
+NORTXAV : 🌡️ Températures | Valeurs
+NORTRAV : 🌡️ Températures | Valeurs
+NORTXQ90 : 🌡️ Températures | Valeurs
+NORTXQ10 : 🌡️ Températures | Valeurs
+NORTNQ90 : 🌡️ Températures | Valeurs
+NORTNQ10 : 🌡️ Températures | Valeurs
+NORHDD : 🌡️ Températures | Valeurs
+NORCDD : 🌡️ Températures | Valeurs
+
+ATAV : 🌡️ Températures | Ecarts
+ATNAV : 🌡️ Températures | Ecarts
+ATXAV : 🌡️ Températures | Ecarts
+ATRAV : 🌡️ Températures | Ecarts
+ATXQ90 : 🌡️ Températures | Ecarts
+ATXQ10 : 🌡️ Températures | Ecarts
+ATNQ90 : 🌡️ Températures | Ecarts
+ATNQ10 : 🌡️ Températures | Ecarts
+AHDD : 🌡️ Températures | Ecarts
+ACDD : 🌡️ Températures | Ecarts
+
+NORSD : 🌡️ Températures | Nombre de jours
+NORTX35 : 🌡️ Températures | Nombre de jours
+NORTXHWD : 🌡️ Températures | Nombre de jours
+NORTXND : 🌡️ Températures | Nombre de jours
+NORTNHT : 🌡️ Températures | Nombre de jours
+NORTR : 🌡️ Températures | Nombre de jours
+NORTNFD : 🌡️ Températures | Nombre de jours
+NORTXFD : 🌡️ Températures | Nombre de jours
+NORTNND : 🌡️ Températures | Nombre de jours
+NORTNCWD : 🌡️ Températures | Nombre de jours
+
+ASD : 🌡️ Températures | Ecarts de jours
+ATX35 : 🌡️ Températures | Ecarts de jours
+ATXHWD : 🌡️ Températures | Ecarts de jours
+ATXND : 🌡️ Températures | Ecarts de jours
+ATNHT : 🌡️ Températures | Ecarts de jours
+ATR : 🌡️ Températures | Ecarts de jours
+ATNFD : 🌡️ Températures | Ecarts de jours
+ATXFD : 🌡️ Températures | Ecarts de jours
+ATNND : 🌡️ Températures | Ecarts de jours
+ATNCWD : 🌡️ Températures | Ecarts de jours
+
+NORPAV : 💧 Précipitations | Valeurs
+NORPQ90 : 💧 Précipitations | Valeurs
+NORPQ99 : 💧 Précipitations | Valeurs
+NORRR : 💧 Précipitations | Valeurs
+NORPINT : 💧 Précipitations | Valeurs
+NORPFL90 : 💧 Précipitations | Valeurs
+NORTPSPI : 💧 Précipitations | Valeurs
+
+APAV : 💧 Précipitations | Ecarts
+APQ90 : 💧 Précipitations | Ecarts
+APQ99 : 💧 Précipitations | Ecarts
+ARR : 💧 Précipitations | Ecarts
+APINT : 💧 Précipitations | Ecarts
+APFL90 : 💧 Précipitations | Ecarts
+ARPAV : 💧 Précipitations | Ecarts
+ARPINT : 💧 Précipitations | Ecarts
+ARRR : 💧 Précipitations | Ecarts
+ARPQ90 : 💧 Précipitations | Ecarts
+ARPQ99 : 💧 Précipitations | Ecarts
+
+NORRR1MM : 💧 Précipitations | Nombre de jours
+NORPN20MM : 💧 Précipitations | Nombre de jours
+NORRR99 : 💧 Précipitations | Nombre de jours
+NORPXCWD : 💧 Précipitations | Nombre de jours
+NORPXCDD : 💧 Précipitations | Nombre de jours
+
+ARR1MM : 💧 Précipitations | Ecarts de jours
+APN20MM : 💧 Précipitations | Ecarts de jours
+ARR99 : 💧 Précipitations | Ecarts de jours
+APXCWD : 💧 Précipitations | Ecarts de jours
+APXCDD : 💧 Précipitations | Ecarts de jours
+
+NORHUSAV : ☁️ Humidité | Valeurs
+AHUSAV : ☁️ Humidité | Ecarts
+
+NORFFQ98 : 🌬️ Vent | Valeurs
+AFFQ98 : 🌬️ Vent | Ecarts
+AFFAV : 🌬️ Vent | Ecarts
+NORFF98 : 🌬️ Vent | Nombre de jours
+AFF98 : 🌬️ Vent | Ecarts de jours
+AFF3 : 🌬️ Vent | Ecarts de jours
+
+NORETPC : ☀️ Évapo-Transpiration | Valeurs
+AETPC : ☀️ Évapo-Transpiration | Ecarts
+ARETPC : ☀️ Évapo-Transpiration | Ecarts
