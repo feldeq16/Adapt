@@ -15,6 +15,24 @@ from geopy.distance import geodesic
 # ============================================
 st.set_page_config(layout="wide", page_title="Observatoire Climatique", page_icon="🌍")
 
+st.markdown("""
+<style>
+    /* Petit hack CSS pour espacer les catégories du dashboard */
+    .stMetric {
+        background-color: #f9f9f9;
+        padding: 15px;
+        border-radius: 8px;
+        border: 1px solid #eee;
+    }
+    h4 {
+        margin-top: 30px;
+        color: #0068c9;
+        border-bottom: 2px solid #f0f2f6;
+        padding-bottom: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("🌍 Observatoire Climatique Multi-Scénarios")
 st.markdown("---")
 
@@ -23,7 +41,7 @@ FICHIER_DEFINITIONS = "name.txt"
 FICHIER_CATEGORIES = "category.txt"
 
 # ============================================
-# 2. FONCTIONS UTILES
+# 2. FONCTIONS DE TRAITEMENT
 # ============================================
 
 def lire_dict_fichier(path):
@@ -42,8 +60,14 @@ def lire_dict_fichier(path):
 
 def extraire_unite(description):
     """Extrait le texte entre la dernière parenthèse"""
+    if not description: return ""
     match = re.search(r"\((.*?)\)$", description.strip())
     return match.group(1) if match else ""
+
+def nettoyer_nom_variable(description):
+    """Enlève l'unité à la fin pour l'affichage propre"""
+    if not description: return ""
+    return re.sub(r"\s*\(.*?\)$", "", description).strip()
 
 def lire_fichier_data(path):
     try:
@@ -53,7 +77,7 @@ def lire_fichier_data(path):
 
 @st.cache_data(show_spinner=False)
 def charger_donnees_globales(dossier):
-    if not os.path.exists(dossier): return None, None
+    if not os.path.exists(dossier): return None, None, None
 
     all_dfs = []
     id_cols = ["Point", "Contexte", "Période"]
@@ -74,27 +98,33 @@ def charger_donnees_globales(dossier):
                 df[c] = pd.to_numeric(df[c].astype(str).str.replace(",", "."), errors="coerce")
         all_dfs.append(df)
 
-    if not all_dfs: return None, None
+    if not all_dfs: return None, None, None
 
     combined = pd.concat(all_dfs, ignore_index=True)
     agg_dict = {c: "first" for c in combined.columns if c not in id_cols}
     final_df = combined.groupby(id_cols, as_index=False).agg(agg_dict)
 
+    # Identification des variables numériques
     numeric_vars = [c for c in final_df.columns if c not in id_cols + latlon_cols and pd.api.types.is_numeric_dtype(final_df[c])]
     
+    # Calcul des échelles globales (Min/Max)
     global_scales = {}
     for v in numeric_vars:
         vmin = final_df[v].min()
         vmax = final_df[v].max()
         global_scales[v] = (vmin, vmax)
 
-    return final_df, global_scales
+    # Calcul des moyennes nationales par Scénario (Contexte) pour comparaison
+    # On groupe par Contexte pour avoir la moyenne de chaque scénario
+    national_means = final_df.groupby("Contexte")[numeric_vars].mean().to_dict(orient="index")
+
+    return final_df, global_scales, national_means
 
 # ============================================
 # 3. CHARGEMENT
 # ============================================
 
-data, echelles_globales = charger_donnees_globales(DOSSIER)
+data, echelles_globales, national_means = charger_donnees_globales(DOSSIER)
 descriptions = lire_dict_fichier(FICHIER_DEFINITIONS)
 categories = lire_dict_fichier(FICHIER_CATEGORIES)
 
@@ -104,7 +134,7 @@ if data is None:
 
 def format_func_var(option):
     desc = descriptions.get(option, "")
-    if desc: return f"{option} - {desc[:50]}..."
+    if desc: return f"{option} - {desc[:40]}..."
     return option
 
 # ============================================
@@ -131,9 +161,6 @@ with st.sidebar:
 
     choix_var = st.selectbox("Variable à analyser", variables_dispos, format_func=format_func_var)
     
-    if choix_var in descriptions:
-        st.info(f"**Définition :** {descriptions[choix_var]}")
-    
     st.divider()
     
     scenarios = sorted(data["Contexte"].unique())
@@ -153,13 +180,13 @@ with st.sidebar:
     style_choisi = st.selectbox("Fond de carte", list(styles_map.keys()))
 
 # ============================================
-# 5. CARTE & LÉGENDE
+# 5. CARTE & COULEURS
 # ============================================
 
 df_map = df_step1[df_step1["Période"] == choix_horizon].copy()
 
 if choix_var not in df_map.columns or df_map[choix_var].isna().all():
-    st.warning("Variable indisponible pour cette sélection.")
+    st.warning("Variable indisponible.")
     st.stop()
 
 df_map = df_map.dropna(subset=["Latitude", "Longitude", choix_var])
@@ -177,41 +204,38 @@ def geocode_safe(address):
 
 col_search, col_kpi = st.columns([2, 1])
 with col_search:
-    adr = st.text_input("📍 Rechercher une adresse", placeholder="Ex: Toulouse, France")
+    adr = st.text_input("📍 Rechercher une adresse", placeholder="Ex: Place du Capitole, Toulouse")
     u_lat, u_lon = None, None
     if adr:
         u_lat, u_lon = geocode_safe(adr)
         if not u_lat: st.warning("Adresse introuvable.")
 
+# Récupération de la moyenne nationale pour ce scénario spécifique
+moyenne_nat = national_means[choix_scenario].get(choix_var, 0)
+desc_brute = descriptions.get(choix_var, choix_var)
+unit_var = extraire_unite(desc_brute)
+
 with col_kpi:
-    avg_val = df_map[choix_var].mean()
-    desc_courte = descriptions.get(choix_var, choix_var)
-    unite = extraire_unite(desc_courte)
-    st.metric(f"Moyenne Nationale", f"{avg_val:.2f} {unite}")
+    st.metric(f"Moyenne France ({choix_scenario})", f"{moyenne_nat:.2f} {unit_var}")
 
-# --- COULEURS (Blanc = 0) ---
-vmin_glob, vmax_glob = echelles_globales[choix_var]
+# --- COULEURS INTELLIGENTES (Adaptative 0) ---
+data_min, data_max = echelles_globales[choix_var]
 
-# CORRECTION DU BUG : On force l'échelle à inclure 0 pour que TwoSlopeNorm fonctionne
-# Si toutes les données sont positives (ex: 10 à 30), on force le min à un tout petit nombre négatif
-if vmin_glob >= 0: 
-    vmin_glob = -0.00001 # Juste un epsilon pour que 0 soit inclus
-    # Optionnel : Si vous préférez une échelle symétrique (ex: -30 à +30), mettez : vmin_glob = -vmax_glob
+# Logique : On étend l'échelle jusqu'à 0 pour garantir que Blanc = 0
+# Si data = [10, 30] -> Echelle [0, 30] (Blanc -> Rouge)
+# Si data = [-30, -10] -> Echelle [-30, 0] (Bleu -> Blanc)
+# Si data = [-10, 10] -> Echelle [-10, 10] (Bleu -> Blanc -> Rouge)
 
-# Si toutes les données sont négatives (ex: -10 à -2), on force le max à un tout petit nombre positif
-if vmax_glob <= 0: 
-    vmax_glob = 0.00001 
-    # Optionnel : Si vous préférez une échelle symétrique, mettez : vmax_glob = -vmin_glob
+vmin = min(data_min, 0)
+vmax = max(data_max, 0)
 
-# Sécurité si tout vaut exactement 0
-if vmin_glob == 0 and vmax_glob == 0:
-    vmin_glob, vmax_glob = -1, 1
+# Edge case : Si tout est parfaitement à 0
+if vmin == 0 and vmax == 0:
+    vmin, vmax = -1, 1
 
-# Maintenant on est sûr que vmin < 0 < vmax
-norm_fixe = mcolors.TwoSlopeNorm(vmin=vmin_glob, vcenter=0, vmax=vmax_glob)
+norm_fixe = mcolors.TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
 cmap = plt.get_cmap("coolwarm")
 
-# Application des couleurs
 rgb = (cmap(norm_fixe(df_map[choix_var].values))[:, :3] * 255).astype(int)
 df_map["r"], df_map["g"], df_map["b"] = rgb[:, 0], rgb[:, 1], rgb[:, 2]
 
@@ -249,34 +273,40 @@ st.pydeck_chart(pdk.Deck(
     map_style=styles_map[style_choisi],
     initial_view_state=view_state,
     layers=layers,
-    tooltip={"html": f"<b>{choix_var}:</b> {{{choix_var}}}<br><i>{{Point}}</i>"}
+    tooltip={"html": f"<b>{choix_var}:</b> {{{choix_var}}} {unit_var}<br><i>{{Point}}</i>"}
 ))
 
-# --- LÉGENDE ---
+# --- LÉGENDE ADAPTATIVE ---
 col_leg1, col_leg2, col_leg3 = st.columns([1, 6, 1])
 with col_leg2:
-    # ... (code titre légende) ...
+    st.caption(f"Légende : {desc_brute}")
     
     fig, ax = plt.subplots(figsize=(10, 0.4))
-    # On utilise bien norm_fixe qui contient les bornes corrigées
     cb = plt.colorbar(plt.cm.ScalarMappable(norm=norm_fixe, cmap=cmap), cax=ax, orientation='horizontal')
     cb.outline.set_visible(False)
     ax.set_axis_off()
     st.pyplot(fig)
     
     c1, c2, c3 = st.columns(3)
-    # Affichage propre des bornes
-    c1.markdown(f"<div style='text-align: left'><b>{vmin_glob:.1f}</b></div>", unsafe_allow_html=True)
-    c2.markdown(f"<div style='text-align: center'><b>0</b></div>", unsafe_allow_html=True)
-    c3.markdown(f"<div style='text-align: right'><b>{vmax_glob:.1f}</b></div>", unsafe_allow_html=True)
+    c1.markdown(f"<div style='text-align: left'><b>{vmin:.1f}</b></div>", unsafe_allow_html=True)
     
+    # On n'affiche le 0 au milieu que s'il est pertinent (pas aux bords)
+    # vmin < -0.1 et vmax > 0.1 sert à éviter d'afficher 0 si l'échelle est [0, 30] ou [-30, 0]
+    if vmin < -0.1 and vmax > 0.1:
+        c2.markdown(f"<div style='text-align: center'><b>0</b></div>", unsafe_allow_html=True)
+    else:
+        c2.write("")
+        
+    c3.markdown(f"<div style='text-align: right'><b>{vmax:.1f}</b></div>", unsafe_allow_html=True)
+
+
 # ============================================
-# 6. ANALYSE DÉTAILLÉE
+# 6. DASHBOARD ANALYTIQUE
 # ============================================
 
 if u_lat:
     st.divider()
-    st.subheader(f"📍 Analyse Locale : {adr}")
+    st.subheader(f"📍 Tableau de Bord Local : {adr}")
     
     # 1. Calculs
     df_map["dist_km"] = df_map.apply(
@@ -284,68 +314,72 @@ if u_lat:
     )
     voisins = df_map.nsmallest(5, "dist_km")
     
-    # Interpolation IDW de la variable sélectionnée
+    # Interpolation IDW pour la variable principale (FOCUS)
     weights = 1 / (voisins["dist_km"] + 0.01)**2
-    val_est_var = np.sum(voisins[choix_var] * weights) / np.sum(weights)
+    val_focus = np.sum(voisins[choix_var] * weights) / np.sum(weights)
 
-    # 2. Mise en avant de la variable sélectionnée
+    # 2. Section FOCUS
     st.markdown(f"""
-    <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; margin-bottom: 20px;">
-        <h3 style="margin:0; color:#31333F;">Focus : {descriptions.get(choix_var, choix_var)}</h3>
-        <h1 style="margin:0; font-size: 3em; color:#0068c9;">{val_est_var:.2f} <span style="font-size: 0.5em; color:#666;">{unite}</span></h1>
-        <p style="margin:0; color:#666;">Valeur interpolée basée sur les 5 stations les plus proches.</p>
+    <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; margin-bottom: 30px;">
+        <h3 style="margin:0; color:#31333F;">Focus : {nettoyer_nom_variable(desc_brute)}</h3>
+        <h1 style="margin:0; font-size: 3em; color:#0068c9;">{val_focus:.2f} <span style="font-size: 0.5em; color:#666;">{unit_var}</span></h1>
+        <p style="margin:0; color:#666;">Moyenne Nationale : {moyenne_nat:.2f} {unit_var} | Ecart : {val_focus - moyenne_nat:+.2f}</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # 3. Détail des voisins
-    with st.expander("Voir le détail des 5 stations utilisées pour ce calcul"):
-        cols_to_show = ["Point", choix_var, "dist_km"]
-        st.dataframe(voisins[cols_to_show].style.format({choix_var: "{:.2f}", "dist_km": "{:.2f} km"}))
+    # 3. DASHBOARD GLOBAL (Cartes Métriques)
+    st.subheader("📊 Indicateurs Complets")
+    st.caption("Comparaison de la valeur locale (pixel le plus proche) avec la moyenne nationale du scénario.")
 
-    # 4. TABLEAU COMPLET PAR CATÉGORIE
-    st.divider()
-    st.subheader("📊 Tableau de Bord Complet (Toutes variables)")
+    # On utilise le pixel le plus proche pour afficher toutes les autres variables rapidement
+    pixel_ref = voisins.iloc[0]
     
-    # On récupère le pixel le plus proche pour afficher TOUTES les données de ce point
-    pixel_ref = voisins.iloc[0] # Le plus proche
+    # Préparation des groupes
+    # On récupère toutes les variables dispos
+    all_vars = [c for c in pixel_ref.index if c in echelles_globales]
     
-    # On prépare les données
-    all_vars_data = []
-    for col in pixel_ref.index:
-        if col in echelles_globales: # Si c'est une variable climatique
-            val = pixel_ref[col]
-            cat = categories.get(col, "Non classé")
-            desc = descriptions.get(col, col)
-            unit = extraire_unite(desc)
-            # On nettoie la description pour enlever l'unité si elle est à la fin
-            desc_clean = desc.replace(f"({unit})", "").strip() if unit else desc
-            
-            all_vars_data.append({
-                "Catégorie": cat,
-                "Variable": col,
-                "Description": desc_clean,
-                "Valeur": val,
-                "Unité": unit
-            })
+    # Groupement par catégorie
+    grouped_vars = {}
+    for var in all_vars:
+        cat = categories.get(var, "Autres Indicateurs")
+        if cat not in grouped_vars: grouped_vars[cat] = []
+        grouped_vars[cat].append(var)
     
-    df_all = pd.DataFrame(all_vars_data)
-    
-    # Affichage par sections catégorisées
-    # On récupère la liste des catégories triées
-    cats_uniques = sorted(df_all["Catégorie"].unique())
-    # On met "Non classé" à la fin
-    if "Non classé" in cats_uniques:
-        cats_uniques.remove("Non classé")
-        cats_uniques.append("Non classé")
+    # Ordre des catégories (Logique vs Alphabétique)
+    sorted_cats = sorted(grouped_vars.keys())
+    if "Autres Indicateurs" in sorted_cats: # Mettre "Autres" à la fin
+        sorted_cats.remove("Autres Indicateurs")
+        sorted_cats.append("Autres Indicateurs")
 
-    for cat in cats_uniques:
+    # Affichage du Dashboard
+    for cat in sorted_cats:
         st.markdown(f"#### {cat}")
-        df_cat = df_all[df_all["Catégorie"] == cat].copy()
         
-        # Petit tableau propre pour chaque catégorie
-        # On cache l'index
-        st.dataframe(
-            df_cat[["Description", "Valeur", "Unité"]].style.format({"Valeur": "{:.2f}"}),
-            use_container_width=True,
-            hide_index=True
-        )
+        vars_in_cat = grouped_vars[cat]
+        
+        # On crée une grille de 3 colonnes
+        cols = st.columns(3)
+        
+        for i, var_code in enumerate(vars_in_cat):
+            # Récupération des infos
+            val_locale = pixel_ref[var_code]
+            # Moyenne nationale pour ce scénario spécifique
+            mean_nat = national_means[choix_scenario].get(var_code, 0)
+            
+            # Textes
+            full_desc = descriptions.get(var_code, var_code)
+            clean_name = nettoyer_nom_variable(full_desc)
+            if len(clean_name) > 40: clean_name = clean_name[:37] + "..."
+            
+            unit = extraire_unite(full_desc)
+            
+            # Calcul Delta
+            delta = val_locale - mean_nat
+            
+            # Affichage dans la colonne correspondante (modulo 3)
+            with cols[i % 3]:
+                st.metric(
+                    label=clean_name,
+                    value=f"{val_locale:.2f} {unit}",
+                    delta=f"{delta:+.2f} vs Moy. Nat."
+                )
