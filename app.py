@@ -304,12 +304,12 @@ with col_leg2:
     
     if vmin_glob >= 0:
         # Positif : 0 -> Max
-        c1.markdown("<div style='text-align: left'><b>0</b> (Blanc)</div>", unsafe_allow_html=True)
+        c1.markdown("<div style='text-align: left'><b>0</b></div>", unsafe_allow_html=True)
         c3.markdown(f"<div style='text-align: right'><b>{vmax_glob:.1f}</b></div>", unsafe_allow_html=True)
     elif vmax_glob <= 0:
         # Négatif : Min -> 0
         c1.markdown(f"<div style='text-align: left'><b>{vmin_glob:.1f}</b></div>", unsafe_allow_html=True)
-        c3.markdown("<div style='text-align: right'><b>0</b> (Blanc)</div>", unsafe_allow_html=True)
+        c3.markdown("<div style='text-align: right'><b>0</b></div>", unsafe_allow_html=True)
     else:
         # Mixte : Min -> 0 -> Max
         c1.markdown(f"<div style='text-align: left'><b>{vmin_glob:.1f}</b></div>", unsafe_allow_html=True)
