@@ -61,7 +61,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🌍 Observatoire Climatique Multi-Scénarios")
+st.title("🌍 Observatoire Climatique")
 st.markdown("---")
 
 # Chemins fichiers
@@ -199,8 +199,9 @@ with tab1:
         st.pyplot(fig)
         
         col_min, col_mid, col_max = st.columns(3)
-        col_min.caption(f"Min: {vmin:.1f}")
-        if vmin < 0 < vmax: col_mid.markdown("<center><small>0 (Blanc)</small></center>", unsafe_allow_html=True)
+        # ---col_min.caption(f"Min: {vmin:.1f}")
+        col_min.markdown(f"<div style='text-align:left'><small>Min: {vmin:.1f}</small></div>", unsafe_allow_html=True)
+        if vmin < 0 < vmax: col_mid.markdown("<center><small>0</small></center>", unsafe_allow_html=True)
         col_max.markdown(f"<div style='text-align:right'><small>Max: {vmax:.1f}</small></div>", unsafe_allow_html=True)
 
 # --- ONGLET 2 : DASHBOARD ---
