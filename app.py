@@ -16,7 +16,6 @@ import requests
 # ============================================
 st.set_page_config(layout="wide", page_title="Observatoire Climatique", page_icon="🌍")
 
-# Décorateur de fragment compatible toutes versions de Streamlit (isole le rechargement d'un composant)
 fragment_rapide = getattr(st, "fragment", getattr(st, "experimental_fragment", lambda f: f))
 
 st.markdown("""
@@ -82,6 +81,15 @@ st.markdown("""
         border-radius: 6px;
         margin-bottom: 14px;
     }
+    .synth-card {
+        background-color: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-top: 4px solid #0068c9;
+        padding: 16px;
+        border-radius: 8px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        height: 100%;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -102,6 +110,29 @@ def normaliser_texte(texte):
     texte = unicodedata.normalize("NFD", str(texte))
     texte = "".join(c for c in texte if unicodedata.category(c) != "Mn")
     return texte.lower().strip()
+
+def renommer_horizon(val):
+    """Remplace H1, H2, H3 par des horizons temporels explicites et triables chronologiquement."""
+    s = str(val).strip()
+    s_up = s.upper()
+    mapping = {
+        "REF": "1976-2005 (Référence)",
+        "REFERENCE": "1976-2005 (Référence)",
+        "RÉFÉRENCE": "1976-2005 (Référence)",
+        "H1": "2021-2050 (Horizon proche)",
+        "H2": "2041-2070 (Horizon moyen)",
+        "H3": "2071-2100 (Horizon lointain)"
+    }
+    if s_up in mapping:
+        return mapping[s_up]
+    # Gestion si H1/H2/H3 est contenu dans une chaîne (ex: "Période H1")
+    if re.search(r"\bH1\b", s_up):
+        return "2021-2050 (Horizon proche)"
+    if re.search(r"\bH2\b", s_up):
+        return "2041-2070 (Horizon moyen)"
+    if re.search(r"\bH3\b", s_up):
+        return "2071-2100 (Horizon lointain)"
+    return s
 
 @st.cache_data(show_spinner=False)
 def lire_dict_fichier(path):
@@ -145,35 +176,54 @@ def nettoyer_nom_variable(description):
     return re.sub(r"\s*\(.*?\)$", "", description).strip()
 
 @st.cache_data(show_spinner=False)
-def trouver_variable_defaut(cat_dict, descriptions):
-    """Recherche la variable correspondant à 'Écart de cumul de précipitation'."""
+def trouver_variable_cible(cat_dict, descriptions, cible="ecart_precip"):
+    """
+    Recherche intelligente d'une variable dans name.txt et category.txt :
+    - 'ecart_precip' -> Ecart de cumul de précipitation (mm)
+    - 'periode_secheresse' -> Période de sécheresse (jour(s))
+    """
     meilleure_var = None
     meilleur_score = -1
+
     for var, info in cat_dict.items():
-        desc_norm = normaliser_texte(descriptions.get(var, var))
+        desc_brute = descriptions.get(var, var)
+        desc_norm = normaliser_texte(desc_brute)
         theme_norm = normaliser_texte(info.get("theme", ""))
         type_norm = normaliser_texte(info.get("type", ""))
         texte_complet = f"{desc_norm} {theme_norm} {type_norm} {normaliser_texte(var)}"
-        
+
         score = 0
-        if "ecart" in texte_complet:
-            score += 4
-        if "cumul" in texte_complet:
-            score += 3
-        if "precip" in texte_complet or "pluie" in texte_complet:
-            score += 4
-        if "annuel" in desc_norm:
-            score += 1
-            
+        if cible == "ecart_precip":
+            if "ecart de cumul de precipitation" in desc_norm:
+                score += 20
+            if "ecart" in texte_complet:
+                score += 5
+            if "cumul" in texte_complet:
+                score += 4
+            if "precip" in texte_complet or "pluie" in texte_complet:
+                score += 5
+            if "(mm)" in desc_norm:
+                score += 2
+        elif cible == "periode_secheresse":
+            if "periode de secheresse" in desc_norm:
+                score += 20
+            if "periode" in desc_norm:
+                score += 5
+            if "secheresse" in texte_complet:
+                score += 6
+            if "jour" in desc_norm:
+                score += 3
+            if "ecart" not in desc_norm:
+                score += 2
+
         if score > meilleur_score:
             meilleur_score = score
             meilleure_var = var
-            
+
     return meilleure_var if meilleure_var else next(iter(cat_dict.keys()), None)
 
 @st.cache_data(show_spinner=False)
 def geocoder_adresse(adr_query):
-    """Interroge l'API Adresse une seule fois par texte saisi et garde le résultat en cache."""
     if adr_query and len(adr_query.strip()) > 2:
         try:
             r = requests.get(
@@ -209,6 +259,10 @@ def charger_donnees_globales(dossier):
     if not all_dfs:
         return None, None, None, None
     combined = pd.concat(all_dfs, ignore_index=True)
+    
+    # Remplacement de H1, H2, H3 par les horizons temporels explicites dès le chargement
+    combined["Période"] = combined["Période"].apply(renommer_horizon)
+    
     agg_dict = {c: "first" for c in combined.columns if c not in id_cols}
     final_df = combined.groupby(id_cols, as_index=False).agg(agg_dict)
     
@@ -216,12 +270,10 @@ def charger_donnees_globales(dossier):
     global_scales = {v: (float(final_df[v].min()), float(final_df[v].max())) for v in numeric_vars}
     national_means = final_df.groupby("Contexte")[numeric_vars].mean().to_dict(orient="index")
     
-    # Extraction unique de la grille spatiale pour vectoriser les calculs de distance
     grille_points = final_df[["Point", "Latitude", "Longitude"]].drop_duplicates(subset=["Point"]).copy()
     return final_df, global_scales, national_means, grille_points
 
 def haversine_vectorise(lat1, lon1, lats, lons):
-    """Calcule la distance en km sur des milliers de points simultanément en NumPy (< 0.2 ms)."""
     r = 6371.0
     phi1 = np.radians(lat1)
     phi2 = np.radians(lats)
@@ -232,10 +284,6 @@ def haversine_vectorise(lat1, lon1, lats, lons):
 
 @st.cache_data(show_spinner=False)
 def interpoler_toutes_variables_adresse(u_lat, u_lon, _data, _grille_points, numeric_vars):
-    """
-    Identifie les 5 points les plus proches en 0.2 ms et pré-calcule toutes les variables
-    interpolées pour tous les scénarios et toutes les périodes en une seule opération matricielle.
-    """
     dists = haversine_vectorise(u_lat, u_lon, _grille_points["Latitude"].to_numpy(), _grille_points["Longitude"].to_numpy())
     idx_top5 = np.argsort(dists)[:5]
     pts_top5 = _grille_points.iloc[idx_top5]["Point"].to_numpy()
@@ -243,11 +291,9 @@ def interpoler_toutes_variables_adresse(u_lat, u_lon, _data, _grille_points, num
     w_norm = w_top5 / np.sum(w_top5)
     poids_map = dict(zip(pts_top5, w_norm))
 
-    # Filtrage ultra-rapide sur les 5 points uniquement (~30 à 50 lignes au lieu de 80 000)
     df_sub = _data[_data["Point"].isin(pts_top5)].copy()
     df_sub["_w"] = df_sub["Point"].map(poids_map)
 
-    # Moyenne pondérée vectorisée par (Contexte, Période)
     valeurs_ponderees = df_sub[numeric_vars].multiply(df_sub["_w"], axis=0)
     valeurs_ponderees["Contexte"] = df_sub["Contexte"]
     valeurs_ponderees["Période"] = df_sub["Période"]
@@ -277,9 +323,16 @@ cat_dict = cat_dict_valide
 def format_func_clean(option):
     return descriptions.get(option, option)
 
-var_defaut = trouver_variable_defaut(cat_dict, descriptions)
+# Variables par défaut :
+# - Carte & Axe Y du graphique : Ecart de cumul de précipitation (mm)
+# - Axe X du graphique : Période de sécheresse (jour(s))
+var_defaut = trouver_variable_cible(cat_dict, descriptions, cible="ecart_precip")
 theme_defaut = cat_dict[var_defaut]["theme"] if var_defaut in cat_dict else None
 type_defaut = cat_dict[var_defaut]["type"] if var_defaut in cat_dict else None
+
+var_secheresse_defaut = trouver_variable_cible(cat_dict, descriptions, cible="periode_secheresse")
+theme_sech_defaut = cat_dict[var_secheresse_defaut]["theme"] if var_secheresse_defaut in cat_dict else None
+type_sech_defaut = cat_dict[var_secheresse_defaut]["type"] if var_secheresse_defaut in cat_dict else None
 
 if "var_active" not in st.session_state:
     st.session_state["var_active"] = var_defaut
@@ -297,27 +350,26 @@ with st.sidebar:
     df_step = data[data["Contexte"] == choix_scenario]
     
     periodes_dispo = sorted(df_step["Période"].unique())
-    choix_horizon = st.selectbox("Période", periodes_dispo)
+    choix_horizon = st.selectbox("Horizon temporel", periodes_dispo)
     df_map = df_step[df_step["Période"] == choix_horizon]
 
-# Pré-calcul instantané (en cache) de toutes les valeurs locales pour l'adresse
 df_interp_adresse = interpoler_toutes_variables_adresse(u_lat, u_lon, data, grille_points, vars_disponibles)
 valeurs_locales_actuelles = df_interp_adresse.loc[(choix_scenario, choix_horizon)].to_dict()
 
 # ============================================
-# 4. ONGLETS ET COMPOSANTS ISOLÉS (@st.fragment)
+# 4. ONGLETS
 # ============================================
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🗺️ Carte",
     "📊 Dashboard",
     "📈 Graphique",
-    "🌾 Impact Exploitation",
+    "🌾 Impact Cultures & Finances",
     "⚡ Adaptation & Financement",
     "📄 Synthèse"
 ])
 
 # --------------------------------------------
-# ONGLET 1 : CARTE (Isolé pour changement instantané)
+# ONGLET 1 : CARTE
 # --------------------------------------------
 @fragment_rapide
 def afficher_onglet_carte():
@@ -409,7 +461,6 @@ def afficher_onglet_carte():
             tooltip={"html": f"<b>{format_func_clean(choix_var)}</b>: {{{choix_var}}}"}
         ))
         
-        # Barre de couleur CSS native (affichage en 0 ms au lieu de Matplotlib)
         st.markdown(
             f"<div style='height:14px; width:100%; background:{css_grad}; border-radius:4px; border:1px solid #d1d5db; margin-top:6px;'></div>",
             unsafe_allow_html=True
@@ -437,13 +488,12 @@ def afficher_graphe_trajectoire():
         format_func=format_func_clean,
         key="var_traj_tab2"
     )
-    # Lecture directe depuis la table pré-calculée en cache (0 ms)
     df_traj = df_interp_adresse[[var_traj]].reset_index()
-    df_traj.columns = ["Scénario", "Période", "Valeur"]
-    df_traj["Période"] = df_traj["Période"].astype(str)
+    df_traj.columns = ["Scénario", "Horizon temporel", "Valeur"]
+    df_traj = df_traj.sort_values(["Scénario", "Horizon temporel"])
     
     fig_traj = px.line(
-        df_traj, x="Période", y="Valeur", color="Scénario", markers=True,
+        df_traj, x="Horizon temporel", y="Valeur", color="Scénario", markers=True,
         title=f"{format_func_clean(var_traj)} — {adr_full}",
         template="plotly_white"
     )
@@ -453,7 +503,7 @@ def afficher_graphe_trajectoire():
 with tab2:
     st.subheader(f"📍 Analyse locale : {adr_full}")
 
-    with st.expander("Évolution multi-périodes et scénarios sur ce point", expanded=True):
+    with st.expander("Évolution selon les horizons temporels et scénarios RCP", expanded=True):
         afficher_graphe_trajectoire()
 
     hierarchy = {}
@@ -484,7 +534,9 @@ with tab2:
         st.divider()
 
 # --------------------------------------------
-# ONGLET 3 : GRAPHIQUE (Isolé avec @st.fragment)
+# ONGLET 3 : GRAPHIQUE
+# X par défaut : Période de sécheresse (jour(s))
+# Y par défaut : Ecart de cumul de précipitation (mm)
 # --------------------------------------------
 @fragment_rapide
 def afficher_onglet_graphique():
@@ -492,26 +544,31 @@ def afficher_onglet_graphique():
     col_x, col_y = st.columns(2)
     
     themes_list = sorted(list(set(v["theme"] for v in cat_dict.values())))
-    idx_tx_def = themes_list.index(theme_defaut) if theme_defaut in themes_list else 0
     
     with col_x:
         st.markdown("**Axe X**")
+        idx_tx_def = themes_list.index(theme_sech_defaut) if theme_sech_defaut in themes_list else 0
         tx = st.selectbox("Thème X", themes_list, index=idx_tx_def, key="tx")
+        
         types_x = sorted(list(set(v["type"] for k, v in cat_dict.items() if v["theme"] == tx)))
-        idx_tyx_def = types_x.index(type_defaut) if type_defaut in types_x else 0
+        idx_tyx_def = types_x.index(type_sech_defaut) if type_sech_defaut in types_x else 0
         tyx = st.selectbox("Type X", types_x, index=idx_tyx_def, key="tyx")
+        
         vars_x = [k for k, v in cat_dict.items() if v["theme"] == tx and v["type"] == tyx]
-        idx_vx_def = vars_x.index(var_defaut) if var_defaut in vars_x else 0
+        idx_vx_def = vars_x.index(var_secheresse_defaut) if var_secheresse_defaut in vars_x else 0
         var_x = st.selectbox("Variable X", vars_x, index=idx_vx_def, format_func=format_func_clean, key="vx")
 
     with col_y:
         st.markdown("**Axe Y**")
-        idx_ty_def = 0 if idx_tx_def != 0 else min(1, len(themes_list) - 1)
+        idx_ty_def = themes_list.index(theme_defaut) if theme_defaut in themes_list else 0
         ty = st.selectbox("Thème Y", themes_list, index=idx_ty_def, key="ty")
+        
         types_y = sorted(list(set(v["type"] for k, v in cat_dict.items() if v["theme"] == ty)))
-        tyy = st.selectbox("Type Y", types_y, key="tyy")
+        idx_tyy_def = types_y.index(type_defaut) if type_defaut in types_y else 0
+        tyy = st.selectbox("Type Y", types_y, index=idx_tyy_def, key="tyy")
+        
         vars_y = [k for k, v in cat_dict.items() if v["theme"] == ty and v["type"] == tyy]
-        idx_vy_def = min(1, len(vars_y) - 1) if (tx == ty and tyx == tyy and len(vars_y) > 1) else 0
+        idx_vy_def = vars_y.index(var_defaut) if var_defaut in vars_y else 0
         var_y = st.selectbox("Variable Y", vars_y, index=idx_vy_def, format_func=format_func_clean, key="vy")
 
     cols_subset = [var_x] if var_x == var_y else [var_x, var_y]
@@ -528,7 +585,7 @@ def afficher_onglet_graphique():
     user_pt = pd.DataFrame({
         "axe_x": [val_x],
         "axe_y": [val_y],
-        "Légende": ["📍 Votre Adresse"]
+        "Légende": [f"📍 {adr_full}"]
     })
     df_scat_plot = pd.concat([df_scat_plot, user_pt], ignore_index=True)
 
@@ -539,7 +596,7 @@ def afficher_onglet_graphique():
         color="Légende",
         color_discrete_map={
             "Points du territoire": "rgba(100,100,100,0.3)",
-            "📍 Votre Adresse": "#e74c3c"
+            f"📍 {adr_full}": "#e74c3c"
         },
         labels={"axe_x": format_func_clean(var_x), "axe_y": format_func_clean(var_y)},
         template="plotly_white"
@@ -551,83 +608,127 @@ with tab3:
     afficher_onglet_graphique()
 
 # --------------------------------------------
-# ONGLET 4 : IMPACT EXPLOITATION
+# ONGLET 4 : IMPACT CULTURES & FINANCES
 # --------------------------------------------
 with tab4:
-    st.subheader(f"🌾 Simulation technico-économique — {adr_full}")
+    st.subheader(f"🌾 Diagnostic Agro-Climatique & Stress-Test d'Exploitation — {adr_full}")
 
+    # Référentiel économique RICA / Agreste / Chambres d'Agriculture
     profils_filieres = {
-        "Grandes Cultures (Blé, Maïs, Colza, Orge, Betterave)": {"surf": 140, "ca_ha": 1650, "ebe_pct": 32, "dette_an": 42000, "sensibilite": 1.0},
-        "Polyculture - Élevage": {"surf": 115, "ca_ha": 2100, "ebe_pct": 28, "dette_an": 38000, "sensibilite": 1.15},
-        "Viticulture": {"surf": 20, "ca_ha": 18000, "ebe_pct": 36, "dette_an": 55000, "sensibilite": 1.35},
-        "Arboriculture": {"surf": 35, "ca_ha": 9500, "ebe_pct": 30, "dette_an": 48000, "sensibilite": 1.30},
-        "Maraîchage & Légumes plein champ": {"surf": 50, "ca_ha": 5800, "ebe_pct": 30, "dette_an": 36000, "sensibilite": 1.20}
+        "Grandes Cultures & Cultures Industrielles (Blé, Betterave, Pomme de terre - Type Hauts-de-France)": {
+            "surf": 135, "ca_ha": 2300, "ebe_pct": 33, "dette_an": 45000, "sensibilite": 1.10,
+            "cultures": ["Blé tendre d'hiver", "Betterave sucrière / Pomme de terre", "Colza / Orge d'hiver"]
+        },
+        "Grandes Cultures Céréalières (Blé, Orge, Colza, Maïs, Tournesol)": {
+            "surf": 140, "ca_ha": 1650, "ebe_pct": 32, "dette_an": 40000, "sensibilite": 1.00,
+            "cultures": ["Blé tendre d'hiver", "Maïs grain / Tournesol", "Colza / Orge d'hiver"]
+        },
+        "Polyculture - Élevage (Bovins lait / Autonomie fourragère)": {
+            "surf": 115, "ca_ha": 2150, "ebe_pct": 29, "dette_an": 38000, "sensibilite": 1.15,
+            "cultures": ["Prairies & Fourrages (Luzerne/Ray-grass)", "Maïs ensilage", "Blé tendre d'hiver"]
+        },
+        "Viticulture (AOC / Haute valeur ajoutée)": {
+            "surf": 20, "ca_ha": 18000, "ebe_pct": 36, "dette_an": 55000, "sensibilite": 1.35,
+            "cultures": ["Vigne (Floraison & Véraison)"]
+        },
+        "Arboriculture & Maraîchage plein champ": {
+            "surf": 40, "ca_ha": 8500, "ebe_pct": 30, "dette_an": 42000, "sensibilite": 1.25,
+            "cultures": ["Vergers & Légumes plein champ"]
+        }
     }
 
     col_p1, col_p2, col_p3 = st.columns(3)
     with col_p1:
-        filiere = st.selectbox("Orientation (OTEX)", list(profils_filieres.keys()))
-        p_def = profils_filieres[filiere]
-        surface_ha = st.number_input("Surface Agricole Utile - SAU (ha)", min_value=1, max_value=2000, value=p_def["surf"], step=5)
-    with col_p2:
-        ca_par_ha = st.number_input("Produit brut moyen (€ / ha)", min_value=200, max_value=80000, value=p_def["ca_ha"], step=100)
-        marge_ebe_pct = st.slider("Taux d'EBE historique (% du CA)", min_value=10, max_value=65, value=p_def["ebe_pct"])
-    with col_p3:
-        var_cible_stress = st.session_state.get("var_active", var_defaut)
-        idx_stress = vars_disponibles.index(var_cible_stress) if var_cible_stress in vars_disponibles else 0
-        var_alea_ref = st.selectbox(
-            "Variable climatique de référence",
-            vars_disponibles,
-            index=idx_stress,
-            format_func=format_func_clean
+        filiere = st.selectbox(
+            "Orientation technico-économique (OTEX)",
+            list(profils_filieres.keys()),
+            help="Catégories issues du Réseau d'Information Comptable Agricole (RICA / Agreste)."
         )
-        annuite_dette = st.number_input("Annuités d'emprunt (€ / an)", min_value=0, max_value=500000, value=p_def["dette_an"], step=2000)
+        p_def = profils_filieres[filiere]
+        surface_ha = st.number_input(
+            "Surface Agricole Utile - SAU (ha)",
+            min_value=1, max_value=2000, value=p_def["surf"], step=5,
+            help="Moyenne nationale en grandes cultures : ~135 à 140 ha."
+        )
+    with col_p2:
+        ca_par_ha = st.number_input(
+            "Produit brut moyen (€ / ha / an)",
+            min_value=200, max_value=80000, value=p_def["ca_ha"], step=100,
+            help="Chiffre d'affaires par hectare (ventes de récoltes + aides découplées). Source : RICA / Chambres d'agriculture."
+        )
+        marge_ebe_pct = st.slider(
+            "Ratio EBE / Produit brut historique (%)",
+            min_value=10, max_value=65, value=p_def["ebe_pct"],
+            help="L'Excédent Brut d'Exploitation (EBITDA) représente en moyenne 28% à 35% du produit brut en France (Source : RICA / Cerfrance)."
+        )
+    with col_p3:
+        annuite_dette = st.number_input(
+            "Annuités d'emprunt bancaire (€ / an)",
+            min_value=0, max_value=500000, value=p_def["dette_an"], step=2000,
+            help="Remboursement annuel du capital et des intérêts (matériel, foncier, bâtiments). Représente en moyenne 35% à 45% de l'EBE."
+        )
+        taux_mo_sol = st.slider(
+            "Taux de Matière Organique du sol (% MO)",
+            min_value=1.0, max_value=5.0, value=2.2, step=0.2,
+            help="+1% de Matière Organique augmente la Réserve Utile du sol d'environ 16 mm (soit 160 m³ d'eau stockée/ha), ce qui amortit les sécheresses."
+        )
 
-    val_locale_stress = float(valeurs_locales_actuelles.get(var_alea_ref, 0.0))
-    vmin_s, vmax_s = echelles_globales.get(var_alea_ref, (0.0, 1.0))
-    span_s = max(abs(vmax_s - vmin_s), 1e-4)
-    indice_exposition_local = np.clip(abs(val_locale_stress - vmin_s) / span_s, 0.08, 0.95)
-    
-    perte_rendement_moy_pct = round(indice_exposition_local * 24.0 * p_def["sensibilite"], 1)
-    perte_rendement_crise_pct = round(min(70.0, perte_rendement_moy_pct * 2.1), 1)
+    # Calcul de l'exposition agro-climatique locale (combine Sécheresse + Précipitations + Variable active)
+    val_sech = float(valeurs_locales_actuelles.get(var_secheresse_defaut, 0.0))
+    vmin_sech, vmax_sech = echelles_globales.get(var_secheresse_defaut, (0.0, 1.0))
+    score_sech = np.clip(abs(val_sech - vmin_sech) / max(abs(vmax_sech - vmin_sech), 1e-4), 0.1, 0.95)
+
+    val_prec = float(valeurs_locales_actuelles.get(var_defaut, 0.0))
+    vmin_prec, vmax_prec = echelles_globales.get(var_defaut, (0.0, 1.0))
+    score_prec = np.clip(abs(vmax_prec - val_prec) / max(abs(vmax_prec - vmin_prec), 1e-4), 0.1, 0.95)
+
+    # Effet tampon agronomique de la Matière Organique (base référence = 2.0 % MO)
+    gain_eau_mm = (taux_mo_sol - 2.0) * 16.0
+    facteur_tampon_sol = np.clip(1.0 - (taux_mo_sol - 2.0) * 0.10, 0.70, 1.15)
+
+    indice_exposition_local = (0.55 * score_sech + 0.45 * score_prec) * facteur_tampon_sol
+    perte_rendement_moy_pct = round(indice_exposition_local * 22.0 * p_def["sensibilite"], 1)
+    perte_rendement_crise_pct = round(min(65.0, perte_rendement_moy_pct * 2.0), 1)
 
     ca_initial = surface_ha * ca_par_ha
     ebe_initial = ca_initial * (marge_ebe_pct / 100.0)
 
+    # Rigidité des charges : 80% des coûts (semences, engrais, fermage, matériel) sont déjà engagés avant l'aléa
     perte_ca_moy = ca_initial * (perte_rendement_moy_pct / 100.0)
-    ebe_projete_moy = ebe_initial - (perte_ca_moy * 0.78)
+    ebe_projete_moy = ebe_initial - (perte_ca_moy * 0.80)
     perte_ca_crise = ca_initial * (perte_rendement_crise_pct / 100.0)
     ebe_projete_crise = ebe_initial - (perte_ca_crise * 0.85)
 
+    solde_treso_init = ebe_initial - annuite_dette
     solde_treso_proj = ebe_projete_moy - annuite_dette
     solde_treso_crise = ebe_projete_crise - annuite_dette
 
     st.markdown("---")
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Chiffre d'affaires initial", f"{ca_initial:,.0f} €/an".replace(",", " "))
+    k1.metric("Produit Brut (CA) Initial", f"{ca_initial:,.0f} €/an".replace(",", " "))
     k2.metric(
-        f"Variation de rendement ({choix_horizon})",
+        f"Impact Rendement ({choix_horizon[:9]})",
         f"-{perte_rendement_moy_pct:.1f} %",
         delta=f"-{perte_rendement_crise_pct:.1f}% en année extrême",
         delta_color="inverse"
     )
     k3.metric(
-        "EBE projeté (sans adaptation)",
+        "EBE Projeté (Sans adaptation)",
         f"{ebe_projete_moy:,.0f} €/an".replace(",", " "),
         delta=f"{ebe_projete_moy - ebe_initial:+,.0f} €/an vs réf.".replace(",", " ")
     )
-    statut_dette = "Couvert" if solde_treso_proj > 15000 else ("Sous tension" if solde_treso_proj > 0 else "Déficitaire")
+    statut_dette = "Couvert" if solde_treso_proj > 18000 else ("Sous tension" if solde_treso_proj > 0 else "Déficitaire")
     k4.metric(
-        "Solde après annuités",
+        "Revenu dispo après annuités",
         f"{solde_treso_proj:,.0f} €/an".replace(",", " "),
-        delta=statut_dette,
-        delta_color="normal" if solde_treso_proj > 0 else "inverse"
+        delta=f"{statut_dette} (Réf: {solde_treso_init:,.0f} €)".replace(",", " "),
+        delta_color="normal" if solde_treso_proj > 15000 else "inverse"
     )
 
     col_g1, col_g2 = st.columns([3, 2])
     with col_g1:
         df_stress_bar = pd.DataFrame({
-            "Situation": ["Référence historique", f"Moyenne ({choix_horizon})", f"Aléa décennal ({choix_horizon})"],
+            "Situation": ["Référence historique", f"Moyenne {choix_horizon[:9]}", f"Année extrême {choix_horizon[:9]}"],
             "EBE (€)": [ebe_initial, ebe_projete_moy, ebe_projete_crise],
             "Annuités (€)": [annuite_dette, annuite_dette, annuite_dette]
         })
@@ -635,7 +736,7 @@ with tab4:
         fig_stress.add_trace(go.Bar(
             x=df_stress_bar["Situation"],
             y=df_stress_bar["EBE (€)"],
-            name="EBE (€)",
+            name="EBE généré (€)",
             marker_color=["#0068c9", "#f59e0b", "#dc2626"],
             text=[f"{v:,.0f} €".replace(",", " ") for v in df_stress_bar["EBE (€)"]],
             textposition="auto"
@@ -643,39 +744,81 @@ with tab4:
         fig_stress.add_trace(go.Scatter(
             x=df_stress_bar["Situation"],
             y=df_stress_bar["Annuités (€)"],
-            name="Annuités d'emprunt",
+            name="Seuil des annuités bancaires",
             mode="lines+markers",
             line=dict(color="#1f2937", width=2.5, dash="dash")
         ))
         fig_stress.update_layout(
-            title="Évolution de l'EBE face aux annuités bancaires",
+            title="Effet ciseau : impact de la baisse de rendement sur l'EBE et le remboursement de la dette",
             template="plotly_white",
             yaxis_title="€ / an"
         )
         st.plotly_chart(fig_stress, use_container_width=True)
 
     with col_g2:
-        st.markdown("#### Lecture financière")
-        if solde_treso_proj <= 0:
-            st.markdown(
-                f"<div class='alert-box'><b>Risque de trésorerie :</b><br>"
-                f"Pour le scénario <b>{choix_scenario} ({choix_horizon})</b>, la baisse d'EBE "
-                f"(<b>{ebe_initial - ebe_projete_moy:,.0f} €/an</b>) ne permet plus d'assurer les annuités "
-                f"et les prélèvements privés sans adaptation.</div>".replace(",", " "),
-                unsafe_allow_html=True
-            )
-        else:
-            st.markdown(
-                f"<div class='info-box'><b>Impact sur la marge :</b><br>"
-                f"L'exploitation conserve un solde positif en année moyenne mais perd "
-                f"<b>{(1 - ebe_projete_moy/max(ebe_initial,1))*100:.0f}% de son EBE</b>. "
-                f"En année extrême, le solde après dette passe à <b>{solde_treso_crise:,.0f} €</b>.</div>".replace(",", " "),
-                unsafe_allow_html=True
-            )
+        st.markdown("#### 💧 Réserve Utile du Sol & Mécanisme Financier")
         st.markdown(
-            f"- **Ratio de couverture de la dette (DSCR) :** passe de **{ebe_initial/max(annuite_dette,1):.2f}x** à **{ebe_projete_moy/max(annuite_dette,1):.2f}x**.\n"
-            f"- **Impact volumes amont/aval :** baisse moyenne estimée à **-{perte_rendement_moy_pct:.1f}%**."
+            f"<div class='info-box'>"
+            f"<b>Effet tampon du sol ({taux_mo_sol:.1f}% de Matière Organique) :</b><br>"
+            f"Variation de réserve en eau utile : <b>{gain_eau_mm:+.0f} mm</b> "
+            f"(soit <b>{gain_eau_mm * 10:+.0f} m³ d'eau/ha</b> stockés dans le sol).<br><br>"
+            f"<b>Pourquoi l'EBE chute plus vite que le rendement ?</b><br>"
+            f"En agriculture, ~80 % des charges (semences, engrais, fermage, mécanisation) sont engagées avant la récolte. "
+            f"Une perte de <b>-{perte_rendement_moy_pct:.1f}%</b> de volume entraîne ici une chute de "
+            f"<b>-{(1 - ebe_projete_moy/max(ebe_initial,1))*100:.0f}% d'EBE</b>."
+            f"</div>",
+            unsafe_allow_html=True
         )
+        if solde_treso_proj < 20000:
+            st.markdown(
+                f"<div class='alert-box'><b>Tension sur la rémunération de l'exploitant :</b><br>"
+                f"Une fois les annuités bancaires ({annuite_dette:,.0f} €) payées, il ne reste que "
+                f"<b>{solde_treso_proj:,.0f} €/an</b> pour rémunérer le travail de l'agriculteur, payer les cotisations MSA et autofinancer la ferme.</div>".replace(",", " "),
+                unsafe_allow_html=True
+            )
+
+    # Nouveau bloc : Matrice de vulnérabilité phénologique par culture
+    st.markdown("#### 🌱 Calendrier de sensibilité phénologique des cultures aux aléas locaux")
+    matrice_cultures = pd.DataFrame([
+        {
+            "Culture": "Blé tendre / Orge d'hiver",
+            "Stade phénologique critique": "Montaison — Floraison — Remplissage du grain (Mai - Juin)",
+            "Seuil physique de perte": "Échaudage thermique dès Tmax > 25-28°C & déficit hydrique printanier",
+            "Levier agronomique d'adaptation": "Variétés plus précoces (esquive), semis sous couvert, réduction de la densité"
+        },
+        {
+            "Culture": "Betterave / Pomme de terre",
+            "Stade phénologique critique": "Tubérisation & Grossissement estival (Juillet - Août)",
+            "Seuil physique de perte": "Arrêt de croissance dès Tmax > 30°C & sensibilité forte à la durée de sécheresse",
+            "Levier agronomique d'adaptation": "Augmentation de la Matière Organique (+RU), binage, irrigation pilotée par sondes"
+        },
+        {
+            "Culture": "Maïs / Tournesol / Sorgho",
+            "Stade phénologique critique": "Floraison mâle/femelle (± 15 jours autour du 15 Juillet)",
+            "Seuil physique de perte": "Avortement des grains en cas de stress hydrique + Tmax > 32°C à la floraison",
+            "Levier agronomique d'adaptation": "Substitution partielle Maïs → Sorgho/Tournesol, indices de précocité adaptés"
+        },
+        {
+            "Culture": "Colza & Légumineuses (Pois/Féverole)",
+            "Stade phénologique critique": "Levée de fin d'été (Août-Sept) & Floraison (Avril-Mai)",
+            "Seuil physique de perte": "Échec de levée si sécheresse en août ; avortement des siliques si gel tardif",
+            "Levier agronomique d'adaptation": "Colza associé à des plantes compagnes (féverole/lentille), semis direct dès la moisson"
+        },
+        {
+            "Culture": "Prairies & Fourrages",
+            "Stade phénologique critique": "Pousse de printemps & Trou estival (Juin - Septembre)",
+            "Seuil physique de perte": "Arrêt de pousse estivale (consommation précoce des stocks hivernaux)",
+            "Levier agronomique d'adaptation": "Prairies multi-espèces à enracinement profond (Luzerne, Sainfoin, Dactyle, Fétuque)"
+        }
+    ])
+    st.dataframe(matrice_cultures, use_container_width=True, hide_index=True)
+
+    with st.expander("ℹ️ Sources et méthodologie des paramètres économiques (RICA / Agreste)"):
+        st.markdown("""
+        - **Produit brut et EBE :** Ordres de grandeur issus du *Réseau d'Information Comptable Agricole (RICA - Agreste)* et des observatoires *Cerfrance*. En grandes cultures et polyculture-élevage, le taux d'EBE/CA moyen se situe entre **28 % et 35 %**.
+        - **Annuités et utilisation de l'EBE :** En comptabilité agricole, l'EBE sert à payer : (1) les **annuités d'emprunt** (~35 à 45 % de l'EBE), (2) les **prélèvements privés et cotisations MSA** de l'exploitant, et (3) l'**autofinancement**.
+        - **Rigidité des charges :** Lorsqu'un aléa climatique survient en fin de printemps ou en été, **75 % à 85 % des charges annuelles** ont déjà été dépensées (semences, engrais, protection des cultures, carburant, fermage, assurances).
+        """)
 
 # --------------------------------------------
 # ONGLET 5 : ADAPTATION & FINANCEMENT
@@ -685,19 +828,19 @@ with tab5:
 
     catalogue_solutions = {
         "Agriculture de conservation des sols (couverts végétaux, semis direct, allongement des rotations)": {
-            "capex_ha": 320, "gain_resilience_pct": 35, "revenu_comp_ha": 0, "tco2_ha_an": 1.4
+            "capex_ha": 320, "gain_resilience_pct": 35, "revenu_comp_ha": 0, "tco2_ha_an": 1.3
         },
         "Hydrologie régénérative & agroforesterie (haies brise-vent, fascines, rétention d'eau)": {
-            "capex_ha": 650, "gain_resilience_pct": 25, "revenu_comp_ha": 40, "tco2_ha_an": 1.8
+            "capex_ha": 600, "gain_resilience_pct": 25, "revenu_comp_ha": 35, "tco2_ha_an": 1.6
+        },
+        "Diversification d'assolement (introduction de légumineuses / luzerne / sorgho sobres en intrants)": {
+            "capex_ha": 180, "gain_resilience_pct": 28, "revenu_comp_ha": 45, "tco2_ha_an": 0.9
         },
         "Irrigation de précision & pilotage par sondes tensiométriques": {
-            "capex_ha": 1400, "gain_resilience_pct": 45, "revenu_comp_ha": -35, "tco2_ha_an": 0.1
+            "capex_ha": 1350, "gain_resilience_pct": 42, "revenu_comp_ha": -30, "tco2_ha_an": 0.1
         },
-        "Agrivoltaïsme (protection climatique des cultures & partage de la rente énergétique)": {
-            "capex_ha": 1800, "gain_resilience_pct": 40, "revenu_comp_ha": 420, "tco2_ha_an": 0.8
-        },
-        "Valorisation biomasse : pyrogazéification & amendement biochar (rétention hydrique)": {
-            "capex_ha": 950, "gain_resilience_pct": 38, "revenu_comp_ha": 260, "tco2_ha_an": 2.5
+        "Valorisation biomasse : pyrogazéification & amendement biochar (rétention hydrique + énergie)": {
+            "capex_ha": 900, "gain_resilience_pct": 36, "revenu_comp_ha": 240, "tco2_ha_an": 2.4
         }
     }
 
@@ -705,30 +848,46 @@ with tab5:
     with col_sol:
         st.markdown("#### 1. Leviers agronomiques et énergétiques")
         solutions_choisies = st.multiselect(
-            "Pratiques et équipements déployés :",
+            "Pratiques et équipements déployés sur l'exploitation :",
             list(catalogue_solutions.keys()),
             default=[
                 "Agriculture de conservation des sols (couverts végétaux, semis direct, allongement des rotations)",
-                "Hydrologie régénérative & agroforesterie (haies brise-vent, fascines, rétention d'eau)"
+                "Diversification d'assolement (introduction de légumineuses / luzerne / sorgho sobres en intrants)"
             ]
         )
         part_surface_adaptee = st.slider(
             "Part de la SAU engagée (%)",
-            min_value=10, max_value=100, value=60, step=10
+            min_value=10, max_value=100, value=65, step=5
         ) / 100.0
 
     with col_fin:
-        st.markdown("#### 2. Co-financements mobilisables")
-        subv_capex_pct = st.slider("Subventions publiques à l'investissement (% CAPEX)", 0, 70, 35, 5)
-        pse_eau_ha = st.slider("Paiements pour Services Environnementaux - PSE (€/ha/an)", 0, 200, 90, 5)
-        prime_filiere_ha = st.slider("Prime filière bas-carbone / Scope 3 (€/ha/an)", 0, 250, 70, 10)
-        prix_tco2 = st.slider("Valorisation Crédits Carbone (€/tCO2e)", 0, 150, 50, 5)
+        st.markdown("#### 2. Aides publiques et co-financements privés")
+        subv_capex_pct = st.slider(
+            "Subventions investissement PCAE / Haies (% du CAPEX)",
+            0, 70, 35, 5,
+            help="Plan de Compétitivité et d'Adaptation des Exploitations (PCAE / FranceAgriMer / Régions) : taux standard de 30% à 40% sur le matériel d'adaptation, et jusqu'à 60-80% sur la plantation de haies."
+        )
+        pse_eau_ha = st.slider(
+            "MAEC & PSE Agence de l'Eau (€ / ha engagé / an)",
+            0, 200, 80, 5,
+            help="Mesures Agro-Environnementales et Climatiques (PAC) et Paiements pour Services Environnementaux (Agences de l'Eau) : contrats de 5 ans rémunérés entre 60 € et 150 €/ha/an."
+        )
+        prime_filiere_ha = st.slider(
+            "Prime filière aval Scope 3 CSRD (€ / ha engagé / an)",
+            0, 250, 60, 10,
+            help="Primes de transition versées par les coopératives et industriels agroalimentaires (sucreries, malteries, meuniers, laiteries) pour sécuriser leur approvisionnement bas-carbone."
+        )
+        prix_tco2 = st.slider(
+            "Valorisation Label Bas Carbone (€ / tCO2e)",
+            0, 150, 45, 5,
+            help="Méthode Grandes Cultures / Haies du Label Bas Carbone : prix moyen observé sur le marché volontaire français entre 35 € et 55 €/tCO2e."
+        )
 
     surf_engagee = surface_ha * part_surface_adaptee
     capex_brut = sum(catalogue_solutions[s]["capex_ha"] for s in solutions_choisies) * surf_engagee
     capex_net = capex_brut * (1.0 - subv_capex_pct / 100.0)
 
-    reduction_choc_pct = min(0.88, sum(catalogue_solutions[s]["gain_resilience_pct"] for s in solutions_choisies) / 100.0) * (0.4 + 0.6 * part_surface_adaptee)
+    reduction_choc_pct = min(0.85, sum(catalogue_solutions[s]["gain_resilience_pct"] for s in solutions_choisies) / 100.0) * (0.4 + 0.6 * part_surface_adaptee)
     perte_evitee_an = (ebe_initial - ebe_projete_moy) * reduction_choc_pct
 
     revenu_energie_an = sum(catalogue_solutions[s]["revenu_comp_ha"] for s in solutions_choisies) * surf_engagee
@@ -737,14 +896,15 @@ with tab5:
 
     gain_total_annuel = perte_evitee_an + revenu_energie_an + revenu_coalition_an
     ebe_adapte_complet = ebe_projete_moy + gain_total_annuel
+    solde_adapte_apres_dette = ebe_adapte_complet - annuite_dette
     temps_retour_ans = capex_net / max(gain_total_annuel, 1.0)
 
     st.markdown("---")
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("CAPEX net exploitant", f"{capex_net:,.0f} €".replace(",", " "), delta=f"-{subv_capex_pct}% d'aides")
+    m1.metric("CAPEX net exploitant", f"{capex_net:,.0f} €".replace(",", " "), delta=f"-{subv_capex_pct}% subventionné (PCAE)")
     m2.metric("Pertes climatiques évitées", f"+{perte_evitee_an:,.0f} €/an".replace(",", " "), delta=f"{reduction_choc_pct*100:.0f}% du choc absorbé")
-    m3.metric("Revenus complémentaires", f"+{revenu_energie_an + revenu_coalition_an:,.0f} €/an".replace(",", " "), delta=f"{tonnes_co2_an:.0f} tCO2e/an")
-    m4.metric("EBE après adaptation", f"{ebe_adapte_complet:,.0f} €/an".replace(",", " "), delta=f"Retour en {temps_retour_ans:.1f} ans")
+    m3.metric("Aides & Revenus (PSE/CSRD/CO2)", f"+{revenu_energie_an + revenu_coalition_an:,.0f} €/an".replace(",", " "), delta=f"{tonnes_co2_an:.0f} tCO2e/an")
+    m4.metric("EBE sécurisé après adaptation", f"{ebe_adapte_complet:,.0f} €/an".replace(",", " "), delta=f"Retour sur invest. : {temps_retour_ans:.1f} ans")
 
     annees = np.arange(0, 16)
     flux_inaction = [0.0]
@@ -763,10 +923,10 @@ with tab5:
     df_cashflow = pd.DataFrame({
         "Année": np.tile(annees, 3),
         "Trésorerie cumulée différentielle (€)": np.concatenate([flux_inaction, flux_adapt_seule, flux_adapt_coalition]),
-        "Scénario": (
-            ["Statu quo (sans adaptation)"] * len(annees)
-            + ["Adaptation autofinancée"] * len(annees)
-            + ["Adaptation co-financée (Subventions + PSE + Filière + Carbone)"] * len(annees)
+        "Trajectoire": (
+            ["1. Statu quo (sans adaptation)"] * len(annees)
+            + ["2. Adaptation autofinancée seule (creux de trésorerie initial)"] * len(annees)
+            + ["3. Adaptation co-financée (PCAE + PSE + Prime Filière + Label Bas Carbone)"] * len(annees)
         )
     })
 
@@ -774,64 +934,183 @@ with tab5:
         df_cashflow,
         x="Année",
         y="Trésorerie cumulée différentielle (€)",
-        color="Scénario",
+        color="Trajectoire",
         markers=True,
         color_discrete_map={
-            "Statu quo (sans adaptation)": "#dc2626",
-            "Adaptation autofinancée": "#f59e0b",
-            "Adaptation co-financée (Subventions + PSE + Filière + Carbone)": "#0068c9"
+            "1. Statu quo (sans adaptation)": "#dc2626",
+            "2. Adaptation autofinancée seule (creux de trésorerie initial)": "#f59e0b",
+            "3. Adaptation co-financée (PCAE + PSE + Prime Filière + Label Bas Carbone)": "#0068c9"
         },
-        title="Trésorerie cumulée différentielle sur 15 ans",
+        title="Trésorerie cumulée différentielle sur 15 ans : sécurisation de la transition (Années 1 à 3)",
         template="plotly_white"
     )
     fig_cf.add_hline(y=0, line_dash="dot", line_color="gray")
     fig_cf.update_traces(line=dict(width=2.5))
     st.plotly_chart(fig_cf, use_container_width=True)
 
+    with st.expander("ℹ️ Détail des dispositifs d'aides publiques et privées mobilisés"):
+        st.markdown("""
+        - **PCAE (Plan de Compétitivité et d'Adaptation des Exploitations) & FranceAgriMer :** Subventionne de **30 % à 40 %** les investissements matériels d'adaptation (semoirs de semis direct, sondes et pilotage de l'irrigation, équipements de protection climatique) et jusqu'à **60-80 %** pour l'agroforesterie et les haies.
+        - **MAEC & PSE (Paiements pour Services Environnementaux) :** Rémunération contractuelle sur 5 ans (**60 € à 150 €/ha/an**) pilotée par les Agences de l'Eau et la PAC pour la couverture des sols, la réduction d'intrants et l'infiltration de l'eau.
+        - **Label Bas Carbone (Méthode Grandes Cultures & Haies) :** Génère **0,8 à 1,5 tCO₂e/ha/an** valorisées entre **35 € et 55 €/tCO₂e** auprès d'entreprises partenaires.
+        - **Primes Filières Aval (Scope 3 CSRD) :** Bonus contractuel (**40 € à 100 €/ha/an**) versé par les coopératives et industriels agroalimentaires pour sécuriser leurs volumes d'approvisionnement et réduire leur empreinte Scope 3 FLAG.
+        """)
+
 # --------------------------------------------
-# ONGLET 6 : SYNTHÈSE & EXPORT
+# ONGLET 6 : SYNTHÈSE ENRICHIE & EXPORT
 # --------------------------------------------
 with tab6:
-    st.subheader("📄 Synthèse et export des données")
+    st.subheader(f"📄 Synthèse Stratégique & Feuille de Route — {adr_full}")
+
+    # Cartes visuelles de synthèse en 3 colonnes
+    c_syn1, c_syn2, c_syn3 = st.columns(3)
+    with c_syn1:
+        st.markdown(
+            f"<div class='synth-card'>"
+            f"<h4>🌡️ 1. Exposition Climatique Locale</h4>"
+            f"<p><b>Commune :</b> {adr_full}<br>"
+            f"<b>Scénario :</b> {choix_scenario}<br>"
+            f"<b>Horizon :</b> {choix_horizon}</p>"
+            f"<hr style='margin:8px 0;'>"
+            f"<p>• <b>{nettoyer_nom_variable(format_func_clean(var_defaut))} :</b> {val_prec:.1f} {extraire_unite(descriptions.get(var_defaut, ''))} "
+            f"<i>(Moy. nat. : {national_means[choix_scenario].get(var_defaut, 0):.1f})</i><br>"
+            f"• <b>{nettoyer_nom_variable(format_func_clean(var_secheresse_defaut))} :</b> {val_sech:.1f} {extraire_unite(descriptions.get(var_secheresse_defaut, ''))} "
+            f"<i>(Moy. nat. : {national_means[choix_scenario].get(var_secheresse_defaut, 0):.1f})</i><br>"
+            f"• <b>Choc de rendement estimé :</b> <span style='color:#dc2626;font-weight:bold;'>-{perte_rendement_moy_pct:.1f}%</span> en moyenne "
+            f"(-{perte_rendement_crise_pct:.1f}% en année extrême)</p>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+    with c_syn2:
+        st.markdown(
+            f"<div class='synth-card'>"
+            f"<h4>💶 2. Vulnérabilité Financière (Statu Quo)</h4>"
+            f"<p><b>Orientation :</b> {filiere[:38]}...<br>"
+            f"<b>Surface (SAU) :</b> {surface_ha} ha<br>"
+            f"<b>Produit Brut initial :</b> {ca_initial:,.0f} €/an</p>"
+            f"<hr style='margin:8px 0;'>"
+            f"<p>• <b>EBE historique :</b> {ebe_initial:,.0f} €/an ({marge_ebe_pct}% du CA)<br>"
+            f"• <b>EBE projeté sans adaptation :</b> <span style='color:#dc2626;font-weight:bold;'>{ebe_projete_moy:,.0f} €/an</span> "
+            f"({ebe_projete_moy - ebe_initial:+,.0f} €/an)<br>"
+            f"• <b>Reste après annuités ({annuite_dette:,.0f} €) :</b> <b>{solde_treso_proj:,.0f} €/an</b> ({statut_dette})</p>"
+            f"</div>".replace(",", " "),
+            unsafe_allow_html=True
+        )
+    with c_syn3:
+        st.markdown(
+            f"<div class='synth-card'>"
+            f"<h4>🚀 3. Bilan Après Adaptation & Aides</h4>"
+            f"<p><b>Surface engagée :</b> {surf_engagee:.0f} ha ({int(part_surface_adaptee*100)}% SAU)<br>"
+            f"<b>CAPEX Brut :</b> {capex_brut:,.0f} €<br>"
+            f"<b>CAPEX Net (après PCAE {subv_capex_pct}%) :</b> <b>{capex_net:,.0f} €</b></p>"
+            f"<hr style='margin:8px 0;'>"
+            f"<p>• <b>Pertes évitées :</b> <span style='color:#0068c9;font-weight:bold;'>+{perte_evitee_an:,.0f} €/an</span><br>"
+            f"• <b>Co-financements (PSE/Filière/CO2) :</b> <span style='color:#0068c9;font-weight:bold;'>+{revenu_energie_an + revenu_coalition_an:,.0f} €/an</span><br>"
+            f"• <b>Nouvel EBE sécurisé :</b> <b>{ebe_adapte_complet:,.0f} €/an</b> (ROI : {temps_retour_ans:.1f} ans)</p>"
+            f"</div>".replace(",", " "),
+            unsafe_allow_html=True
+        )
+
+    st.markdown("#### 📊 Tableau Comparatif : Trajectoire de l'Exploitation")
+    df_comp_synthese = pd.DataFrame([
+        {
+            "Indicateur Financier & Agronomique": "Produit Brut / Chiffre d'Affaires (€/an)",
+            "1. Référence Historique": f"{ca_initial:,.0f} €".replace(",", " "),
+            f"2. Sans Adaptation ({choix_horizon[:9]})": f"{ca_initial - perte_ca_moy:,.0f} €".replace(",", " "),
+            f"3. Avec Adaptation & Co-financements ({choix_horizon[:9]})": f"{ca_initial - perte_ca_moy + perte_evitee_an + revenu_energie_an + revenu_coalition_an:,.0f} €".replace(",", " ")
+        },
+        {
+            "Indicateur Financier & Agronomique": "Excédent Brut d'Exploitation - EBE (€/an)",
+            "1. Référence Historique": f"{ebe_initial:,.0f} €".replace(",", " "),
+            f"2. Sans Adaptation ({choix_horizon[:9]})": f"{ebe_projete_moy:,.0f} €".replace(",", " "),
+            f"3. Avec Adaptation & Co-financements ({choix_horizon[:9]})": f"{ebe_adapte_complet:,.0f} €".replace(",", " ")
+        },
+        {
+            "Indicateur Financier & Agronomique": "Annuités Bancaires (€/an)",
+            "1. Référence Historique": f"{annuite_dette:,.0f} €".replace(",", " "),
+            f"2. Sans Adaptation ({choix_horizon[:9]})": f"{annuite_dette:,.0f} €".replace(",", " "),
+            f"3. Avec Adaptation & Co-financements ({choix_horizon[:9]})": f"{annuite_dette:,.0f} €".replace(",", " ")
+        },
+        {
+            "Indicateur Financier & Agronomique": "Solde disponible (Rémunération exploitant + Autofinancement)",
+            "1. Référence Historique": f"{solde_treso_init:,.0f} €".replace(",", " "),
+            f"2. Sans Adaptation ({choix_horizon[:9]})": f"{solde_treso_proj:,.0f} €".replace(",", " "),
+            f"3. Avec Adaptation & Co-financements ({choix_horizon[:9]})": f"{solde_adapte_apres_dette:,.0f} €".replace(",", " ")
+        },
+        {
+            "Indicateur Financier & Agronomique": "Ratio de couverture de la dette bancaire (DSCR = EBE / Annuités)",
+            "1. Référence Historique": f"{ebe_initial/max(annuite_dette,1):.2f}x",
+            f"2. Sans Adaptation ({choix_horizon[:9]})": f"{ebe_projete_moy/max(annuite_dette,1):.2f}x",
+            f"3. Avec Adaptation & Co-financements ({choix_horizon[:9]})": f"{ebe_adapte_complet/max(annuite_dette,1):.2f}x"
+        }
+    ])
+    st.dataframe(df_comp_synthese, use_container_width=True, hide_index=True)
+
+    st.markdown("#### 🗓️ Feuille de Route Opérationnelle Recommandée")
+    col_r1, col_r2, col_r3 = st.columns(3)
+    with col_r1:
+        st.markdown(
+            "<div class='info-box'><b>Phase 1 — Court terme (Année 1)</b><br>"
+            "• Audit pédologique (Réserve Utile) et montage des dossiers <b>PCAE / MAEC / Label Bas Carbone</b>.<br>"
+            "• Ajustement variétal (esquive précoce) et implantation systématique des couverts végétaux d'interculture.</div>",
+            unsafe_allow_html=True
+        )
+    with col_r2:
+        st.markdown(
+            "<div class='info-box'><b>Phase 2 — Transition (Années 2 à 3)</b><br>"
+            "• Réduction du travail du sol, introduction de légumineuses/cultures sobres dans la rotation.<br>"
+            "• Perception des premières annuités <b>PSE Eau et Primes Filières</b> pour compenser la phase d'apprentissage.</div>",
+            unsafe_allow_html=True
+        )
+    with col_r3:
+        st.markdown(
+            "<div class='info-box'><b>Phase 3 — Pleine maturité (Années 4 à 15)</b><br>"
+            "• Hausse structurelle du taux de Matière Organique (+160 m³ d'eau/ha par % de MO gagné).<br>"
+            "• Stabilisation de l'EBE, audit de vérification et versement des <b>Crédits Carbone</b>.</div>",
+            unsafe_allow_html=True
+        )
 
     solutions_liste_str = "\n".join([f"- {s}" for s in solutions_choisies]) if solutions_choisies else "- Aucun levier sélectionné"
-    rapport_md = f"""# SYNTHÈSE D'ANALYSE AGRO-CLIMATIQUE
+    rapport_md = f"""# DIAGNOSTIC DE RÉSILIENCE AGRO-CLIMATIQUE & PLAN DE FINANCEMENT
 **Localisation :** {adr_full} ({u_lat:.3f}°N, {u_lon:.3f}°E)
-**Scénario & Horizon :** {choix_scenario} — {choix_horizon}
-**Orientation :** {filiere} ({surface_ha} ha)
+**Scénario & Horizon temporel :** {choix_scenario} — {choix_horizon}
+**Orientation technico-économique :** {filiere} ({surface_ha} ha)
 
 ---
 
-### 1. Indicateur climatique de référence
-- **Variable :** {format_func_clean(var_alea_ref)}
-- **Valeur locale interpolée :** {val_locale_stress:.2f} {extraire_unite(descriptions.get(var_alea_ref, ""))} (Moyenne nationale : {national_means[choix_scenario].get(var_alea_ref, 0):.2f})
-- **Impact rendement estimé :** -{perte_rendement_moy_pct:.1f}% en moyenne (-{perte_rendement_crise_pct:.1f}% en année extrême)
+### 1. Exposition Climatique Locale (Interpolation sur les 5 mailles les plus proches)
+- **{format_func_clean(var_defaut)} :** {val_prec:.2f} {extraire_unite(descriptions.get(var_defaut, ""))} (Moyenne nationale : {national_means[choix_scenario].get(var_defaut, 0):.2f})
+- **{format_func_clean(var_secheresse_defaut)} :** {val_sech:.2f} {extraire_unite(descriptions.get(var_secheresse_defaut, ""))} (Moyenne nationale : {national_means[choix_scenario].get(var_secheresse_defaut, 0):.2f})
+- **Taux de Matière Organique considéré :** {taux_mo_sol:.1f}% (Effet sur la Réserve Utile : {gain_eau_mm:+.0f} mm soit {gain_eau_mm*10:+.0f} m³ d'eau/ha)
+- **Impact rendement agronomique estimé :** -{perte_rendement_moy_pct:.1f}% en moyenne (-{perte_rendement_crise_pct:.1f}% en année décennale extrême)
 
-### 2. Situation économique de l'exploitation
-- **Chiffre d'affaires initial :** {ca_initial:,.0f} € / an
-- **EBE initial :** {ebe_initial:,.0f} € / an ({marge_ebe_pct}% du CA)
-- **EBE projeté sans adaptation :** {ebe_projete_moy:,.0f} € / an
-- **Solde après annuités ({annuite_dette:,.0f} €/an) :** {solde_treso_proj:,.0f} € / an ({statut_dette})
+### 2. Stress-Test Financier (Coût de l'Inaction)
+- **Produit Brut (Chiffre d'affaires) initial :** {ca_initial:,.0f} € / an ({ca_par_ha:,.0f} €/ha)
+- **Excédent Brut d'Exploitation (EBE) historique :** {ebe_initial:,.0f} € / an ({marge_ebe_pct}% du produit brut)
+- **EBE projeté sans adaptation :** {ebe_projete_moy:,.0f} € / an (soit une érosion de {ebe_projete_moy - ebe_initial:+,.0f} € / an)
+- **Annuités bancaires :** {annuite_dette:,.0f} € / an (Ratio DSCR passant de {ebe_initial/max(annuite_dette,1):.2f}x à {ebe_projete_moy/max(annuite_dette,1):.2f}x)
+- **Solde disponible après dette (avant adaptation) :** {solde_treso_proj:,.0f} € / an ({statut_dette})
 
-### 3. Plan d'adaptation ({int(part_surface_adaptee*100)}% de la SAU)
+### 3. Leviers d'Adaptation Déployés ({surf_engagee:.0f} ha engagés, soit {int(part_surface_adaptee*100)}% de la SAU)
 {solutions_liste_str}
 
-### 4. Bilan financier après adaptation
-- **CAPEX brut :** {capex_brut:,.0f} €
-- **CAPEX net après aides ({subv_capex_pct}%) :** {capex_net:,.0f} €
-- **Pertes évitées :** +{perte_evitee_an:,.0f} € / an
-- **Revenus complémentaires (Énergie, PSE, Filière, Carbone) :** +{revenu_energie_an + revenu_coalition_an:,.0f} € / an
-- **EBE après adaptation :** {ebe_adapte_complet:,.0f} € / an (Temps de retour : {temps_retour_ans:.1f} ans)
+### 4. Plan de Financement & Retour sur Investissement
+- **Investissement initial (CAPEX Brut) :** {capex_brut:,.0f} €
+- **Subventions publiques mobilisées (PCAE / FranceAgriMer / Régions - {subv_capex_pct}%) :** -{capex_brut - capex_net:,.0f} €
+- **CAPEX Net à la charge de l'exploitation :** {capex_net:,.0f} €
+- **Pertes agricoles évitées :** +{perte_evitee_an:,.0f} € / an
+- **Co-financements annuels (MAEC/PSE : {pse_eau_ha} €/ha + Prime Filière CSRD : {prime_filiere_ha} €/ha + Label Bas Carbone : {tonnes_co2_an:.0f} tCO2e à {prix_tco2} €/t) :** +{revenu_energie_an + revenu_coalition_an:,.0f} € / an
+- **Nouvel EBE sécurisé après adaptation :** {ebe_adapte_complet:,.0f} € / an (Solde après dette : {solde_adapte_apres_dette:,.0f} € / an)
+- **Temps de retour sur investissement (ROI) :** {temps_retour_ans:.1f} ans
 """.replace(",", " ")
 
-    st.markdown(f"<div class='info-box'>{rapport_md}</div>", unsafe_allow_html=True)
-
+    st.markdown("---")
     col_dl1, col_dl2 = st.columns(2)
     with col_dl1:
         st.download_button(
-            label="📥 Télécharger la synthèse (.md)",
+            label="📥 Télécharger le rapport de synthèse complet (.md)",
             data=rapport_md.encode("utf-8"),
-            file_name=f"Synthese_{adr_input.replace(' ', '_')}_{choix_horizon}.md",
+            file_name=f"Synthese_AgroClimat_{adr_input.replace(' ', '_')}_{choix_horizon[:9]}.md",
             mime="text/markdown",
             use_container_width=True
         )
@@ -845,16 +1124,16 @@ with tab6:
                 "Valeur_Locale": round(float(valeurs_locales_actuelles.get(v, 0.0)), 3),
                 "Moyenne_Nationale": round(national_means[choix_scenario].get(v, 0), 3),
                 "Scenario": choix_scenario,
-                "Periode": choix_horizon,
+                "Horizon_Temporel": choix_horizon,
                 "Adresse": adr_full
             }
             for v in vars_disponibles
         ]
         csv_bytes = pd.DataFrame(rows_export).to_csv(index=False).encode("utf-8-sig")
         st.download_button(
-            label="📊 Exporter les indicateurs locaux (.csv)",
+            label="📊 Exporter tous les indicateurs climatiques locaux (.csv)",
             data=csv_bytes,
-            file_name=f"Indicateurs_Climat_{adr_input.replace(' ', '_')}.csv",
+            file_name=f"Indicateurs_Climat_{adr_input.replace(' ', '_')}_{choix_horizon[:9]}.csv",
             mime="text/csv",
             use_container_width=True
         )
